@@ -289,6 +289,14 @@ Two deliberate choices:
 
 The six edge cases from the brief map to named `describe` blocks so they are greppable.
 
+The real `confirmMatch` / `rejectMatch` server actions were additionally exercised over
+HTTP against a running dev server, not only through the harness above: confirming a
+candidate attached it and auto-rejected its sibling, and rejecting the confirmed match
+released the transaction's slot back to `null`. The Jest harness mirrors the action
+bodies because `'use server'` modules cannot be invoked outside a Next request context,
+but it calls the same `slot-claim` helpers the actions call, so the concurrency guarantee
+under test is the production one.
+
 `any` appears nowhere in the codebase. Strict mode is on and `npm run typecheck` is clean.
 
 ---
@@ -347,6 +355,14 @@ distributions. `MAX_TIP_RATIO` wants to be per-client, or per-merchant-category.
 - `MockExtractor` returns an `UNKNOWN` extraction for unrecognised content rather than
   throwing, because real OCR returns *something* for every input and the pipeline must
   handle a confident-looking nothing.
+- **Supplier email addresses are mapped to a single client.** The seed registers
+  `billing@alfanar-fuel.com.sa` as a `SenderIdentity` for Rawabi so the brief's sample
+  payload resolves. This does not generalise — one supplier bills many fleets, so the
+  same address would need to map to several clients. A production system would scope by
+  the *receiving* inbox instead (a per-client alias such as
+  `receipts+rawabi@darb.example.com`), which is unambiguous and costs nothing. I kept the
+  sender-address mapping so the brief's payload works unmodified; the fleet-manager
+  identity (`fleetops@rawabi-logistics.example`) is the shape that actually scales.
 - Signature verification allows unsigned requests in development
   (`ALLOW_UNSIGNED_WEBHOOKS=true`) so the sample scripts run without signing. A signature
   that is **present but wrong** is always rejected regardless — permissiveness never

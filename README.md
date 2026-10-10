@@ -14,10 +14,14 @@ Design decisions, threshold justifications and trade-offs are in
 Requires Node 20+. No database server: SQLite, no Docker, no API keys.
 
 ```bash
-npm install          # postinstall runs `prisma generate`
+npm install          # postinstall creates .env from .env.example, then runs `prisma generate`
 npm run db:reset     # create prisma/dev.db, push the schema, seed it
 npm run dev          # http://localhost:3000
 ```
+
+`.env` is gitignored, so setup materialises it from `.env.example` — there are no secrets
+to supply. If your npm blocks lifecycle scripts (npm 11 does by default) and
+`node_modules/.prisma/client` is missing, run `npx prisma generate` once.
 
 Then, in a second terminal:
 

@@ -5,6 +5,7 @@ import { log } from '@/lib/logger';
 import { getExtractor } from '@/lib/extraction';
 import { encodeSignals, type DocumentSource, type DocumentStatus } from '@/lib/domain/enums';
 import { selectCandidateTransactions } from '@/lib/services/candidate-selection';
+import { claimConfirmedDocumentSlot } from '@/lib/services/slot-claim';
 import {
   matchDocument,
   type MatchableDocument,
@@ -324,18 +325,36 @@ export async function persistMatchResult(
       }
 
       if (autoMatch) {
-        // Claims the transaction's single confirmed-document slot. If another document
-        // took it between the matcher's read and now, this throws P2002 and we fall back
-        // to review rather than overwriting someone else's evidence.
-        await tx.transaction.update({
-          where: { id: winner.transactionId },
-          data: { confirmedDocumentId: documentId },
+        // Compare-and-set, not a blind write: if another document claimed this
+        // transaction between the matcher's read and now, the claim fails and we fall
+        // back to review rather than overwriting someone else's evidence.
+        const claimed = await claimConfirmedDocumentSlot(
+          tx.transaction,
+          winner.transactionId,
+          documentId,
+        );
+
+        if (claimed) {
+          await tx.document.update({
+            where: { id: documentId },
+            data: { status: 'MATCHED', failureReason: null },
+          });
+          return 'MATCHED' as DocumentStatus;
+        }
+
+        // Lost the race. Demote our own winner back to a candidate so a reviewer sees a
+        // possible duplicate rather than a phantom auto-confirmation.
+        await tx.documentMatch.update({
+          where: {
+            documentId_transactionId: { documentId, transactionId: winner.transactionId },
+          },
+          data: { status: 'CANDIDATE', decidedBy: null, decidedAt: null },
         });
         await tx.document.update({
           where: { id: documentId },
-          data: { status: 'MATCHED', failureReason: null },
+          data: { status: 'NEEDS_REVIEW', failureReason: 'TRANSACTION_ALREADY_DOCUMENTED' },
         });
-        return 'MATCHED' as DocumentStatus;
+        return 'NEEDS_REVIEW' as DocumentStatus;
       }
 
       await tx.document.update({

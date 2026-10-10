@@ -7,6 +7,11 @@ import prisma from '@/lib/prisma';
 import { log } from '@/lib/logger';
 import { actionClient } from '@/lib/actions/safe-action-client';
 import { CONFIRMED_MATCH_STATUSES, TERMINAL_MATCH_STATUSES, type MatchStatus } from '@/lib/domain/enums';
+import {
+  TransactionAlreadyDocumentedError,
+  claimConfirmedDocumentSlot,
+  releaseConfirmedDocumentSlot,
+} from '@/lib/services/slot-claim';
 
 /**
  * Review-queue server actions.
@@ -66,12 +71,14 @@ export const confirmMatch = actionClient
           };
         }
 
-        // Claims the transaction's single confirmed-document slot. Throws P2002 if
-        // another document holds it — which is exactly the protection we want.
-        await tx.transaction.update({
-          where: { id: match.transactionId },
-          data: { confirmedDocumentId: match.documentId },
-        });
+        // Atomic compare-and-set on the transaction's single confirmed-document slot.
+        // A plain update would silently overwrite an existing confirmation; this refuses.
+        const claimed = await claimConfirmedDocumentSlot(
+          tx.transaction,
+          match.transactionId,
+          match.documentId,
+        );
+        if (!claimed) throw new TransactionAlreadyDocumentedError(match.transactionId);
 
         await tx.documentMatch.update({
           where: { id: matchId },
@@ -99,7 +106,12 @@ export const confirmMatch = actionClient
         };
       })
       .catch(async (error): Promise<ReviewActionResult> => {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const blocked =
+          error instanceof TransactionAlreadyDocumentedError ||
+          // The @unique index also fires if this document is already confirmed elsewhere.
+          (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002');
+
+        if (blocked) {
           // The database refused a second confirmed document for this transaction.
           const match = await prisma.documentMatch.findUnique({
             where: { id: matchId },
@@ -134,7 +146,10 @@ export const rejectMatch = actionClient
 
       if (!match) throw new Error(`Match ${matchId} no longer exists`);
 
-      if (TERMINAL_MATCH_STATUSES.includes(match.status as MatchStatus)) {
+      // Only an existing rejection short-circuits. Rejecting a *confirmed* match is a
+      // real operation — it is how a reviewer detaches a wrong auto-match, and how the
+      // duplicate-receipt flow frees a transaction so the correct document can take it.
+      if (match.status === 'REJECTED') {
         const document = await tx.document.findUniqueOrThrow({
           where: { id: match.documentId },
           select: { status: true },
@@ -144,17 +159,14 @@ export const rejectMatch = actionClient
           effect: 'ALREADY_DECIDED' as const,
           documentId: match.documentId,
           documentStatus: document.status,
-          message: `This candidate was already ${match.status.toLowerCase().replace('_', ' ')}.`,
+          message: 'This candidate was already rejected.',
         };
       }
 
-      // Rejecting a confirmed match must also release the transaction's slot, or the
-      // right document could never be attached afterwards.
+      // Detaching a confirmed match must release the transaction's slot, or the correct
+      // document could never be attached afterwards.
       if (CONFIRMED_MATCH_STATUSES.includes(match.status as MatchStatus)) {
-        await tx.transaction.update({
-          where: { id: match.transactionId },
-          data: { confirmedDocumentId: null },
-        });
+        await releaseConfirmedDocumentSlot(tx.transaction, match.transactionId, match.documentId);
       }
 
       await tx.documentMatch.update({

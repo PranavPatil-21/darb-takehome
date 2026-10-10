@@ -1,0 +1,150 @@
+// Darb Portal — document ingestion & transaction matching.
+//
+// NOTE ON SQLITE AND ENUMS
+// The exercise brief models DocumentSource / DocumentStatus / MatchStatus as Prisma
+// `enum`s and `DocumentMatch.signals` as `Json`. Neither is supported by Prisma's
+// SQLite connector, so both are stored as `String` here. Type safety is preserved at
+// the application boundary instead: see `lib/domain/enums.ts` for the union types and
+// Zod schemas that every read and write passes through. The column type is the only
+// thing that changed — the domain model is unchanged, and switching the datasource to
+// Postgres would let these become real enums with no application-code edits.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// A Darb customer (a fleet). Scopes which transactions an emailed invoice may match.
+model Client {
+  id        Int      @id @default(autoincrement())
+  name      String
+  createdAt DateTime @default(now())
+
+  transactions     Transaction[]
+  senderIdentities SenderIdentity[]
+}
+
+/// Maps an inbound sender (email address or E.164 phone) to the scope it is allowed
+/// to submit documents for.
+///
+/// The brief's schema carries `clientId` and `driverPhone` on Transaction but gives no
+/// way to resolve an *email* sender to a client, which makes the "an email document may
+/// only match that client's transactions" rule unimplementable. This model is the
+/// missing link and is the one schema extension that is not optional.
+model SenderIdentity {
+  id          Int      @id @default(autoincrement())
+  /// Lowercased email address, or E.164 phone number without a leading '+'.
+  identifier  String   @unique
+  /// 'EMAIL' | 'WHATSAPP' — see lib/domain/enums.ts
+  channel     String
+  clientId    Int
+  client      Client   @relation(fields: [clientId], references: [id])
+  /// Set for driver (WhatsApp) identities. Null for a fleet-manager mailbox, which is
+  /// scoped to the whole client rather than to one driver's cards.
+  driverPhone String?
+  /// Human label for the review queue ("Faisal Al-Harbi", "Fleet Manager inbox").
+  label       String
+  createdAt   DateTime @default(now())
+
+  @@index([clientId])
+}
+
+model Transaction {
+  id            Int      @id @default(autoincrement())
+  clientId      Int
+  client        Client   @relation(fields: [clientId], references: [id])
+  cardLast4     String
+  /// E.164 without '+'. Used to scope WhatsApp documents to the driver holding the card.
+  driverPhone   String?
+  /// Acquirer-provided name — noisy by nature ("ALFANAR FUEL ST 04 RUH").
+  merchantName  String
+  /// Minor units (halalas). Integer: never float money.
+  amount        Int
+  currency      String   @default("SAR")
+  transactionAt DateTime
+
+  /// Enforces "one confirmed document per transaction" IN THE DATABASE rather than in
+  /// application logic. A second confirm attempt violates this unique constraint and
+  /// fails loudly (P2002) even under concurrent double-submit.
+  confirmedDocumentId Int?      @unique
+  confirmedDocument   Document? @relation("ConfirmedDocument", fields: [confirmedDocumentId], references: [id])
+
+  matches DocumentMatch[]
+
+  @@index([clientId, transactionAt])
+  @@index([driverPhone, transactionAt])
+}
+
+model Document {
+  id               Int     @id @default(autoincrement())
+  /// 'EMAIL' | 'WHATSAPP'
+  source           String
+  /// Provider message id — messageId for email, wamid for WhatsApp.
+  externalId       String  @unique
+  /// SHA-256 of the file bytes.
+  contentHash      String
+  /// Email address or phone that sent it. Resolves to a SenderIdentity.
+  senderIdentifier String
+  /// Resolved scope, denormalised at ingestion so matching needs no extra joins.
+  clientId         Int?
+  driverPhone      String?
+  /// RECEIVED | EXTRACTED | MATCHED | NEEDS_REVIEW | UNMATCHED | FAILED
+  status           String  @default("RECEIVED")
+  /// Set when status is FAILED — why extraction or ingestion gave up.
+  failureReason    String?
+
+  // ---- Extraction results (null until extracted) ----
+  documentType         String?
+  merchantName         String?
+  vatNumber            String?
+  totalAmount          Int?
+  currency             String?
+  documentDate         DateTime?
+  cardLast4            String?
+  invoiceNumber        String?
+  rawText              String?
+  extractionConfidence Float?
+
+  filename   String?
+  mimeType   String?
+  receivedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  matches                 DocumentMatch[]
+  confirmedForTransaction Transaction?    @relation("ConfirmedDocument")
+
+  /// Redelivery of the same file by the same sender is the duplicate we must collapse.
+  /// Scoped rather than global on purpose — see IMPLEMENTATION.md "Deduplication scope".
+  @@unique([senderIdentifier, contentHash])
+  /// Non-unique: lets us *detect* the same file arriving from a different sender and
+  /// flag it for review, instead of silently dropping a second driver's VAT evidence.
+  @@index([contentHash])
+  @@index([status])
+}
+
+model DocumentMatch {
+  id            Int         @id @default(autoincrement())
+  documentId    Int
+  transactionId Int
+  document      Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  transaction   Transaction @relation(fields: [transactionId], references: [id])
+  confidence    Float
+  /// JSON-encoded Record<string, number> — the per-signal breakdown that makes a score
+  /// explainable to a reviewer. Stored as String because SQLite has no Json type;
+  /// read and written through the codecs in lib/domain/enums.ts.
+  signals       String
+  /// CANDIDATE | AUTO_CONFIRMED | CONFIRMED | REJECTED
+  status        String      @default("CANDIDATE")
+  /// 'system' or a reviewer identifier.
+  decidedBy     String?
+  decidedAt     DateTime?
+  createdAt     DateTime    @default(now())
+
+  @@unique([documentId, transactionId])
+  @@index([documentId, confidence])
+  @@index([transactionId])
+}

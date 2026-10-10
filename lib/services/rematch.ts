@@ -1,0 +1,102 @@
+import type { Document, PrismaClient } from '@prisma/client';
+import prismaDefault from '@/lib/prisma';
+import { log } from '@/lib/logger';
+import type { DocumentSource, DocumentStatus } from '@/lib/domain/enums';
+import { documentTypeSchema } from '@/lib/domain/enums';
+import { persistMatchResult } from '@/lib/services/document-ingestion';
+import { selectCandidateTransactions } from '@/lib/services/candidate-selection';
+import { matchDocument, type MatchableDocument } from '@/lib/services/transaction-matcher';
+
+/**
+ * Re-matching for documents that arrived before their transaction.
+ *
+ * A driver photographs a receipt at the pump; the acquirer posts the transaction hours
+ * or days later. The document is UNMATCHED through no fault of its own, and nothing
+ * about it will ever change — so the trigger has to come from the other side.
+ *
+ * Re-matching never re-runs OCR. The extraction is already persisted on the Document
+ * row, and OCR is the expensive, non-deterministic, paid part of the pipeline; replaying
+ * it on every new transaction would be the single most costly mistake available here.
+ */
+
+/** Rebuilds the matcher's input from a stored row. */
+export function toMatchableDocument(document: Document): MatchableDocument {
+  const parsedType = documentTypeSchema.safeParse(document.documentType);
+
+  return {
+    source: document.source as DocumentSource,
+    clientId: document.clientId,
+    driverPhone: document.driverPhone,
+    documentType: parsedType.success ? parsedType.data : 'UNKNOWN',
+    merchantName: document.merchantName,
+    vatNumber: document.vatNumber,
+    totalAmount: document.totalAmount,
+    currency: document.currency,
+    documentDate: document.documentDate ? document.documentDate.toISOString() : null,
+    cardLast4: document.cardLast4,
+    invoiceNumber: document.invoiceNumber,
+    extractionConfidence: document.extractionConfidence ?? 0,
+  };
+}
+
+export interface RematchOutcome {
+  documentId: number;
+  previousStatus: DocumentStatus;
+  status: DocumentStatus;
+  changed: boolean;
+}
+
+/** Re-runs matching for one document. Safe to call on any status. */
+export async function rematchDocument(
+  documentId: number,
+  prisma: PrismaClient = prismaDefault,
+): Promise<RematchOutcome | null> {
+  const document = await prisma.document.findUnique({ where: { id: documentId } });
+  if (!document) return null;
+
+  const previousStatus = document.status as DocumentStatus;
+  const matchable = toMatchableDocument(document);
+  const candidates = await selectCandidateTransactions(prisma, matchable, document.receivedAt);
+  const result = matchDocument(matchable, candidates);
+  const status = await persistMatchResult(prisma, documentId, result);
+
+  return { documentId, previousStatus, status, changed: status !== previousStatus };
+}
+
+/**
+ * Sweeps every document still waiting for a transaction.
+ *
+ * Call this after ingesting new transactions. Scoped to UNMATCHED on purpose: documents
+ * in NEEDS_REVIEW belong to a human and must not be reshuffled under them, and MATCHED
+ * documents are settled.
+ */
+export async function rematchUnmatchedDocuments(
+  options: { clientId?: number } = {},
+  prisma: PrismaClient = prismaDefault,
+): Promise<RematchOutcome[]> {
+  const pending = await prisma.document.findMany({
+    where: {
+      status: 'UNMATCHED',
+      // A document we could not scope to a client cannot be matched by re-running.
+      clientId: options.clientId ?? { not: null },
+    },
+    select: { id: true },
+    orderBy: { id: 'asc' },
+  });
+
+  const outcomes: RematchOutcome[] = [];
+  for (const { id } of pending) {
+    try {
+      const outcome = await rematchDocument(id, prisma);
+      if (outcome) outcomes.push(outcome);
+    } catch (error) {
+      // One poisoned document must not stop the sweep.
+      log.error('Re-match sweep: document failed, continuing', { documentId: id, error });
+    }
+  }
+
+  const changed = outcomes.filter((outcome) => outcome.changed);
+  log.info('Re-match sweep complete', { scanned: outcomes.length, changed: changed.length });
+
+  return outcomes;
+}

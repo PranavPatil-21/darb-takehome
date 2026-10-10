@@ -1,0 +1,14 @@
+ALFANAR FUEL COMPANY
+TAX INVOICE
+Invoice No: INV-99812
+VAT Registration: 300000000000003
+--------------------------------
+Bill To: Rawabi Logistics
+Invoice Date: 14/06/2025
+Fleet fuel - corporate account
+--------------------------------
+Subtotal          4,239.13 SAR
+VAT 15%             635.87 SAR
+TOTAL AMOUNT      4,875.00 SAR
+--------------------------------
+Payment: Corporate card on file

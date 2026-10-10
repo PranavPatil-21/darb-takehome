@@ -11,6 +11,8 @@ const config: Config = {
   // shared database by running serially.
   maxWorkers: 1,
   setupFilesAfterEnv: ['<rootDir>/__tests__/setup.ts'],
+  globalSetup: '<rootDir>/__tests__/global-setup.ts',
+  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/__tests__/helpers/', '<rootDir>/__tests__/setup.ts', '<rootDir>/__tests__/global-setup.ts'],
 };
 
 export default config;

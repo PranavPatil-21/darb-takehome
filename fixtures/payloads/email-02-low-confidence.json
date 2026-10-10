@@ -1,0 +1,14 @@
+{
+  "messageId": "msg_8f2a2",
+  "from": "fleetops@rawabi-logistics.example",
+  "to": "receipts@darb.example.com",
+  "subject": "Fwd: Jarir invoice",
+  "receivedAt": "2025-06-06T08:00:00Z",
+  "attachments": [
+    {
+      "filename": "jarir-invoice.pdf",
+      "contentType": "application/pdf",
+      "contentBase64": "SkFSSVIgQk9PS1NUT1JFClJpeWFkaApWQVQgTm8uIDMwMDAwMDAwMDAwMDA1NQotLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQpEYXRlOiAwNS8wNi8yMDI1Ck9mZmljZSBzdXBwbGllcwotLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQpTdWJ0b3RhbCAgICAgICAgICAgIDE1Ni41MiBTQVIKVkFUIDE1JSAgICAgICAgICAgICAgMjMuNDggU0FSClRPVEFMICAgICAgICAgICAgICAgMTgwLjAwIFNBUgotLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQooZmF4ZWQgY29weSAtIGxvdyBxdWFsaXR5IHNjYW4pCg=="
+    }
+  ]
+}

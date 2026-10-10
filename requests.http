@@ -1,0 +1,123 @@
+### Darb Portal — sample webhook requests
+### Usable with the VS Code REST Client / JetBrains HTTP Client.
+### The email payloads here carry short inline base64; the full generated payloads with
+### real fixture bytes live in fixtures/payloads/ and are fired by scripts/send-sample-webhooks.sh.
+
+@baseUrl = http://localhost:3000
+
+### 1. WhatsApp — exact match. Every signal agrees → AUTO_MATCHED to transaction 1.
+POST {{baseUrl}}/api/webhooks/whatsapp
+Content-Type: application/json
+
+{
+  "entry": [{
+    "changes": [{
+      "value": {
+        "messages": [{
+          "id": "wamid.HBgMOTY2NTUxMjM0NTY3AA==",
+          "from": "966551234567",
+          "timestamp": "1749899520",
+          "type": "image",
+          "image": { "id": "media_4471", "mime_type": "image/jpeg", "sha256": "a3f1c9" }
+        }]
+      }
+    }]
+  }]
+}
+
+### 2. The same message again — idempotency. Expect disposition DUPLICATE, no new document.
+POST {{baseUrl}}/api/webhooks/whatsapp
+Content-Type: application/json
+
+{
+  "entry": [{
+    "changes": [{
+      "value": {
+        "messages": [{
+          "id": "wamid.HBgMOTY2NTUxMjM0NTY3AA==",
+          "from": "966551234567",
+          "timestamp": "1749899520",
+          "type": "image",
+          "image": { "id": "media_4471", "mime_type": "image/jpeg", "sha256": "a3f1c9" }
+        }]
+      }
+    }]
+  }]
+}
+
+### 3. WhatsApp — ambiguous. Two Tamimi transactions, same amount, same day → NEEDS_REVIEW.
+POST {{baseUrl}}/api/webhooks/whatsapp
+Content-Type: application/json
+
+{
+  "entry": [{
+    "changes": [{
+      "value": {
+        "messages": [{
+          "id": "wamid.HBgMOTY2NTUxMjM0NTY4AA==",
+          "from": "966551234567",
+          "timestamp": "1750162200",
+          "type": "image",
+          "image": { "id": "media_4472", "mime_type": "image/jpeg", "sha256": "b7d2e1" }
+        }]
+      }
+    }]
+  }]
+}
+
+### 4. WhatsApp — scoping. A Nujood driver sends Rawabi's receipt; it must not match.
+POST {{baseUrl}}/api/webhooks/whatsapp
+Content-Type: application/json
+
+{
+  "entry": [{
+    "changes": [{
+      "value": {
+        "messages": [{
+          "id": "wamid.HBgMOTY2NTYxMTEyMjMzAA==",
+          "from": "966561112233",
+          "timestamp": "1749899520",
+          "type": "image",
+          "image": { "id": "media_4471", "mime_type": "image/jpeg", "sha256": "a3f1c9" }
+        }]
+      }
+    }]
+  }]
+}
+
+### 5. WhatsApp — malformed. type says image but no image object → 400 with field-level issues.
+POST {{baseUrl}}/api/webhooks/whatsapp
+Content-Type: application/json
+
+{
+  "entry": [{
+    "changes": [{
+      "value": {
+        "messages": [{
+          "id": "wamid.BROKEN",
+          "from": "966551234567",
+          "timestamp": "1749899520",
+          "type": "image"
+        }]
+      }
+    }]
+  }]
+}
+
+### 6. Email — malformed. Bad address, no attachments → 400.
+POST {{baseUrl}}/api/webhooks/email
+Content-Type: application/json
+
+{
+  "messageId": "",
+  "from": "not-an-email",
+  "to": "receipts@darb.example.com",
+  "receivedAt": "nope",
+  "attachments": []
+}
+
+### 7. Health checks
+GET {{baseUrl}}/api/webhooks/email
+
+###
+GET {{baseUrl}}/api/webhooks/whatsapp?hub.mode=subscribe&hub.challenge=12345

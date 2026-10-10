@@ -1,0 +1,14 @@
+{
+  "messageId": "msg_8f2a3",
+  "from": "someone@not-a-customer.example",
+  "to": "receipts@darb.example.com",
+  "subject": "Invoice",
+  "receivedAt": "2025-06-14T10:00:00Z",
+  "attachments": [
+    {
+      "filename": "invoice-99812.pdf",
+      "contentType": "application/pdf",
+      "contentBase64": "QUxGQU5BUiBGVUVMIENPTVBBTlkKVEFYIElOVk9JQ0UKSW52b2ljZSBObzogSU5WLTk5ODEyClZBVCBSZWdpc3RyYXRpb246IDMwMDAwMDAwMDAwMDAwMwotLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQpCaWxsIFRvOiBSYXdhYmkgTG9naXN0aWNzCkludm9pY2UgRGF0ZTogMTQvMDYvMjAyNQpGbGVldCBmdWVsIC0gY29ycG9yYXRlIGFjY291bnQKLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KU3VidG90YWwgICAgICAgICAgNCwyMzkuMTMgU0FSClZBVCAxNSUgICAgICAgICAgICAgNjM1Ljg3IFNBUgpUT1RBTCBBTU9VTlQgICAgICA0LDg3NS4wMCBTQVIKLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0KUGF5bWVudDogQ29ycG9yYXRlIGNhcmQgb24gZmlsZQo="
+    }
+  ]
+}

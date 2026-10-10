@@ -1,103 +1,181 @@
-import Image from "next/image";
+import Link from 'next/link';
+import prisma from '@/lib/prisma';
+import { decodeSignals } from '@/lib/domain/enums';
+import { formatDate, formatMinorUnits, formatPercent, REASON_COPY } from '@/lib/format';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 
-export default function Home() {
+/**
+ * Pipeline overview.
+ *
+ * Not a required deliverable — it exists because the fastest way to understand what the
+ * matcher did is to see every document next to the outcome it reached and the reason it
+ * reached it.
+ */
+
+export const dynamic = 'force-dynamic';
+
+const STATUS_TONE: Record<string, string> = {
+  MATCHED: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200',
+  NEEDS_REVIEW: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+  UNMATCHED: 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-200',
+  FAILED: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
+  RECEIVED: 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-200',
+  EXTRACTED: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
+};
+
+export default async function HomePage() {
+  const [documents, transactionCount, matchedCount] = await Promise.all([
+    prisma.document.findMany({
+      orderBy: { id: 'asc' },
+      include: {
+        matches: {
+          orderBy: [{ confidence: 'desc' }, { transactionId: 'asc' }],
+          include: { transaction: true },
+        },
+      },
+    }),
+    prisma.transaction.count(),
+    prisma.transaction.count({ where: { confirmedDocumentId: { not: null } } }),
+  ]);
+
+  const needsReview = documents.filter((d) => d.status === 'NEEDS_REVIEW').length;
+
   return (
-    <div className="font-sans grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="font-mono list-inside list-decimal text-sm/6 text-center sm:text-left">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] font-mono font-semibold px-1 py-0.5 rounded">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+    <main className="mx-auto w-full max-w-6xl px-6 py-10">
+      <header className="mb-8">
+        <h1 className="text-2xl font-semibold tracking-tight">Darb · document matching</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Receipts and invoices arrive by WhatsApp and email, are extracted by OCR, and are scored
+          against card transactions. High-confidence matches attach themselves; everything
+          ambiguous goes to{' '}
+          <Link href="/review" className="underline underline-offset-4">
+            review
+          </Link>
+          .
+        </p>
+      </header>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+      <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat label="Documents ingested" value={documents.length} />
+        <Stat label="Transactions seeded" value={transactionCount} />
+        <Stat label="Transactions documented" value={matchedCount} />
+        <Stat label="Awaiting review" value={needsReview} />
+      </div>
+
+      {documents.length === 0 ? (
+        <Card>
+          <CardContent className="py-14 text-center text-sm text-muted-foreground">
+            No documents yet. Run{' '}
+            <code className="rounded bg-muted px-1 py-0.5 text-xs">npm run webhooks:demo</code> to
+            fire the sample payloads through both webhooks.
+          </CardContent>
+        </Card>
+      ) : (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Every document, and what the matcher decided</CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>#</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Document</TableHead>
+                  <TableHead className="text-right">Amount</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Best candidate</TableHead>
+                  <TableHead className="text-right">Confidence</TableHead>
+                  <TableHead>Why</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {documents.map((document) => {
+                  const best = document.matches[0];
+                  const signals = best ? decodeSignals(best.signals) : {};
+                  return (
+                    <TableRow key={document.id}>
+                      <TableCell className="tabular-nums text-muted-foreground">
+                        {document.id}
+                      </TableCell>
+                      <TableCell className="text-xs">{document.source}</TableCell>
+                      <TableCell>
+                        <div className="font-medium">{document.merchantName ?? '—'}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {formatDate(document.documentDate)}
+                          {document.cardLast4 ? ` · ••••${document.cardLast4}` : ''}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatMinorUnits(document.totalAmount, document.currency ?? 'SAR')}
+                      </TableCell>
+                      <TableCell>
+                        <Badge className={STATUS_TONE[document.status]}>
+                          {document.status.replace('_', ' ')}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        {best ? (
+                          <>
+                            <div className="text-sm">{best.transaction.merchantName}</div>
+                            <div className="text-xs text-muted-foreground">
+                              txn #{best.transaction.id} ·{' '}
+                              {formatMinorUnits(
+                                best.transaction.amount,
+                                best.transaction.currency,
+                              )}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">none</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {best ? formatPercent(best.confidence) : '—'}
+                        {best ? (
+                          <div className="text-[10px] text-muted-foreground">
+                            {Object.entries(signals)
+                              .filter(([, score]) => score !== null)
+                              .map(([key, score]) => `${key[0]}${Math.round((score ?? 0) * 100)}`)
+                              .join(' · ')}
+                          </div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="max-w-xs text-xs text-muted-foreground">
+                        {document.failureReason
+                          ? (REASON_COPY[document.failureReason] ?? document.failureReason)
+                          : document.status === 'MATCHED'
+                            ? REASON_COPY.CONFIDENT_SINGLE_CANDIDATE
+                            : '—'}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+    </main>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: number }) {
+  return (
+    <Card>
+      <CardContent className="py-4">
+        <p className="text-2xl font-semibold tabular-nums">{value}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
+      </CardContent>
+    </Card>
   );
 }

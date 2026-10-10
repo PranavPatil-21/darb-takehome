@@ -16,7 +16,8 @@
     "db:studio": "prisma studio",
     "postinstall": "prisma generate",
     "setup": "prisma generate && npm run db:reset",
-    "webhooks:demo": "bash scripts/send-sample-webhooks.sh"
+    "webhooks:demo": "bash scripts/send-sample-webhooks.sh",
+    "payloads:generate": "tsx scripts/generate-payloads.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",

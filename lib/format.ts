@@ -1,3 +1,5 @@
+import { format, formatDistanceToNowStrict, isValid } from 'date-fns';
+
 /**
  * Presentation helpers. Money lives in minor units everywhere in this codebase; this is
  * the only place it becomes a human-readable string.
@@ -14,8 +16,16 @@ export function formatMinorUnits(amount: number | null, currency = 'SAR'): strin
 export function formatDate(value: Date | string | null): string {
   if (!value) return '—';
   const date = typeof value === 'string' ? new Date(value) : value;
-  if (Number.isNaN(date.getTime())) return '—';
-  return date.toISOString().slice(0, 16).replace('T', ' ') + 'Z';
+  if (!isValid(date)) return '—';
+  return format(date, 'dd MMM yyyy HH:mm');
+}
+
+/** Relative age, for "received 3 hours ago" in the review queue. */
+export function formatAge(value: Date | string | null): string {
+  if (!value) return '—';
+  const date = typeof value === 'string' ? new Date(value) : value;
+  if (!isValid(date)) return '—';
+  return `${formatDistanceToNowStrict(date)} ago`;
 }
 
 export function formatPercent(value: number | null): string {

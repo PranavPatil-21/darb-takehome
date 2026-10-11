@@ -49,4 +49,19 @@ send email    email-01-tax-invoice        "Tax invoice, no card number → auto-
 send email    email-02-low-confidence     "Signals agree but OCR confidence is 0.42 → NEEDS_REVIEW."
 send email    email-03-unknown-sender     "Unregistered sender → stored but unscoped, so UNMATCHED."
 
+echo
+bold "The Kudu receipt above is UNMATCHED because its transaction has not posted yet."
+dim  "Posting it now should rescue the document automatically — no human, no re-run of OCR."
+echo
+
+bold "→ POST /api/transactions  (late-arriving transaction)"
+response=$(curl -sS -X POST "${BASE_URL}/api/transactions" \
+  -H 'content-type: application/json' \
+  -d '{"transactions":[{"clientId":1,"cardLast4":"4412","driverPhone":"966551234567","merchantName":"KUDU REST 118 RUH","amount":3300,"currency":"SAR","transactionAt":"2025-06-19T13:12:00Z"}]}' 2>&1)
+if command -v jq >/dev/null 2>&1; then
+  printf '%s\n\n' "$(echo "$response" | jq -c '.')"
+else
+  printf '%s\n\n' "$response"
+fi
+
 bold "Done. Open ${BASE_URL} for the overview and ${BASE_URL}/review for the queue."

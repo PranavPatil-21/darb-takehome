@@ -267,7 +267,7 @@ protects nobody against a second browser tab.
 
 ## 5. Testing
 
-**103 tests across 6 suites.** Distribution follows the brief's instruction to put most
+**136 tests across 8 suites.** Distribution follows the brief's instruction to put most
 effort into the matcher.
 
 | Suite | Tests | Covers |
@@ -276,6 +276,8 @@ effort into the matcher.
 | `merchant` | 18 | Normalisation and similarity against real acquirer strings |
 | `document-ingestion` | 18 | Idempotency (including concurrent), failure isolation, scoping |
 | `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |
+| `llm-extractor` | 21 | Money parsing, field normalisation, provider input validation |
+| `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
 | `rematch` | 9 | Late-arriving transactions, sweep scope, no OCR replay |
 
@@ -301,7 +303,82 @@ under test is the production one.
 
 ---
 
-## 6. What I would do next
+## 6. Bonus items
+
+The brief lists five. Four are implemented; the fifth is a sketch, which the brief
+explicitly permits.
+
+| Bonus | Status |
+|---|---|
+| `/review` page with ranked candidates | Built |
+| Re-match `UNMATCHED` documents when transactions arrive | Built, **with a trigger** |
+| Webhook signature verification (HMAC) | Built |
+| Real extractor behind the same interface | Built; mock remains the default |
+| Multi-transaction invoice | Design sketch (see § 7) |
+
+### The re-match trigger — why `POST /api/transactions` exists
+
+The sweep service alone would have been a capability with no caller: nothing in the
+system created transactions, so no code path could ever have invoked it. A reviewer
+reading `rematch.ts` would have found a well-tested function that production never runs.
+
+`app/api/transactions/route.ts` closes the loop. It validates and inserts a batch of
+transactions, then sweeps the unmatched backlog **for the affected clients only** — a
+global sweep would rescan every unmatched document in the system on every batch — and
+reports what it rescued:
+
+```json
+{"created":[17],"rematch":{"scanned":2,"changed":1,
+ "documents":[{"documentId":4,"from":"UNMATCHED","to":"MATCHED"}]}}
+```
+
+Re-matching never re-runs OCR. The extraction is already persisted on the `Document` row,
+and OCR is the expensive, non-deterministic, paid part of the pipeline — replaying it on
+every new transaction would be the costliest possible mistake here. A test asserts this
+by swapping in an extractor that throws if called.
+
+### The real extractor
+
+`LlmVisionExtractor` uses Claude vision and implements the same `DocumentExtractor`
+interface as the mock. Selection happens in one place (`lib/extraction/index.ts`) via
+`EXTRACTOR=llm`; the SDK is imported lazily so the default path never loads it, and a
+missing API key logs a warning and falls back rather than refusing to boot.
+
+Two decisions worth defending:
+
+**Money is parsed in code, not by the model.** The schema asks for `totalAmount` as the
+decimal string exactly as printed (`"125.00"`), never as pre-multiplied halalas. Asking a
+language model to perform the ×100 conversion puts arithmetic in the path of the single
+field the matcher weights most heavily, and a *wrong* amount is far worse than a missing
+one — it produces a confident match against the wrong transaction, which is precisely the
+failure this system exists to prevent. `parseMinorUnits` does the conversion, is pure, and
+has 7 tests.
+
+Writing those tests found two real bugs in my first version. Stripping all whitespace
+turned `"1 2 5"` — an unreadable scan — into a confident `12500`. Stripping all commas
+turned `"125,00"`, a decimal comma, into `1250000`: a hundredfold error. Both now return
+`null`, which the matcher already handles as "signal unavailable".
+
+**Generation is constrained by JSON Schema; validation is Zod.** The SDK's Zod helper
+targets Zod 4 and this project is pinned to Zod 3 by the brief, so the schema is written
+out as JSON Schema for the API and `extractionSchema` validates what comes back. That
+split is worth keeping regardless of the version mismatch: the JSON Schema constrains
+generation, the Zod schema is the trust boundary, and an output that satisfies one but not
+the other is caught rather than assumed away.
+
+A declined request (`stop_reason: "refusal"`) returns HTTP 200 with empty content, so it
+is checked before reading `content` — otherwise the pipeline would crash on an array
+index rather than degrade. It becomes an `ExtractionError`, which the pipeline already
+routes to `FAILED`. I did not add server-side fallbacks: on a receipt-OCR workload a
+policy refusal is close to impossible, the pipeline already degrades safely, and the
+added branching would obscure the part of this file worth reading.
+
+---
+
+## 7. What I would do next
+
+**Swap the fixture `MediaStore` for the real Graph API.** The OCR seam now has a real
+implementation behind it; the media seam still does not. It is the same shape of change.
 
 **Move processing off the webhook thread.** Steps 4–7 run inline. Storage already happens
 first, so the structure is right, but a real deployment should enqueue after persisting
@@ -342,7 +419,7 @@ distributions. `MAX_TIP_RATIO` wants to be per-client, or per-merchant-category.
 
 ---
 
-## 7. Assumptions
+## 8. Assumptions
 
 - WhatsApp numbers are E.164 without a leading `+`; emails are lowercased. Both are
   normalised at ingestion (`normaliseSenderIdentifier`).

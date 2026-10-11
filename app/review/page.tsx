@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { AlertTriangle, FileWarning, Inbox } from 'lucide-react';
 import prisma from '@/lib/prisma';
 import { decodeSignals } from '@/lib/domain/enums';
-import { formatDate, formatMinorUnits, formatPercent, REASON_COPY } from '@/lib/format';
+import { formatAge, formatDate, formatMinorUnits, formatPercent, REASON_COPY } from '@/lib/format';
 import { SignalBreakdownView } from '@/components/review/signal-breakdown';
 import { MatchActions } from '@/components/review/match-actions';
 import { Badge } from '@/components/ui/badge';
@@ -96,6 +96,9 @@ export default async function ReviewPage() {
                     <Badge className={SOURCE_TONE[document.source]}>{document.source}</Badge>
                     <span className="text-xs text-muted-foreground">
                       OCR confidence {formatPercent(document.extractionConfidence)}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      waiting {formatAge(document.receivedAt)}
                     </span>
                   </div>
                 </div>

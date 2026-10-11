@@ -46,6 +46,14 @@ decided for each, annotated with the behaviour it demonstrates. Expected output:
 | `email-02-low-confidence` | `NEEDS_REVIEW` | Signals agree, OCR confidence 0.42 |
 | `email-03-unknown-sender` | `UNMATCHED` | Sender not registered |
 
+It then posts the Kudu receipt's late-arriving transaction to `POST /api/transactions`,
+which rescues that document automatically:
+
+```json
+{"created":[17],"rematch":{"scanned":2,"changed":1,
+ "documents":[{"documentId":4,"from":"UNMATCHED","to":"MATCHED"}]}}
+```
+
 Open **http://localhost:3000** for the pipeline overview and
 **http://localhost:3000/review** to confirm or reject candidates.
 
@@ -57,7 +65,7 @@ Client, including the malformed payloads that return `400`.
 ## Tests
 
 ```bash
-npm test           # 103 tests, 6 suites
+npm test           # 136 tests, 8 suites
 npm run typecheck  # tsc --noEmit, strict
 npm run build      # production build
 ```
@@ -67,9 +75,11 @@ Integration tests create their own throwaway `prisma/test.db`; they do not touch
 | Suite | Tests | Covers |
 |---|---|---|
 | `transaction-matcher` | 32 | All six brief edge cases, vetoes, purity, determinism |
+| `llm-extractor` | 21 | Money parsing, field normalisation, provider input validation |
 | `merchant` | 18 | Normalisation and similarity on real acquirer strings |
 | `document-ingestion` | 18 | Idempotency incl. concurrent, failure isolation, scoping |
 | `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |
+| `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
 | `rematch` | 9 | Late-arriving transactions, sweep scope, no OCR replay |
 
@@ -81,11 +91,14 @@ Integration tests create their own throwaway `prisma/test.db`; they do not touch
 app/
   api/webhooks/email/route.ts       inbound email webhook
   api/webhooks/whatsapp/route.ts    inbound WhatsApp webhook
+  api/transactions/route.ts         transaction ingestion — triggers re-matching
   review/page.tsx                   review queue
   page.tsx                          pipeline overview
 lib/
   domain/enums.ts                   union types + Zod at the persistence boundary
-  extraction/                       DocumentExtractor interface + MockExtractor
+  extraction/                       DocumentExtractor interface
+    mock-extractor.ts               fixture-backed, the default
+    llm-extractor.ts                real Claude vision OCR behind the same interface
   matching/
     scoring-config.ts               every threshold, with its reasoning
     merchant.ts                     normalisation + similarity
@@ -146,10 +159,26 @@ export interface DocumentExtractor {
 }
 ```
 
-Implement it, then change one line in `lib/extraction/index.ts`. The mock stays the
-default so the repository runs with no keys. `MediaStore` is the same seam for WhatsApp
-media: `FixtureMediaStore` resolves ids from `fixtures/`, a real one would call the Graph
-API.
+`LlmVisionExtractor` (`lib/extraction/llm-extractor.ts`) is a working implementation
+using Claude vision. Turn it on with:
+
+```bash
+EXTRACTOR=llm ANTHROPIC_API_KEY=sk-ant-... npm run dev
+```
+
+The mock stays the default so the repository runs with no keys, and an `EXTRACTOR=llm`
+with no key logs a warning and falls back rather than refusing to boot. Nothing else in
+the codebase changes — the pipeline, the matcher, and every test are unaware of which
+implementation is running, which is the point of the seam.
+
+One deliberate detail: the model is asked for the amount as the decimal string exactly as
+printed (`"125.00"`), never as pre-multiplied minor units. The ×100 conversion happens in
+`parseMinorUnits`, which is pure and unit-tested — a language model doing arithmetic on
+the field the matcher weights most heavily is an avoidable risk, and a *wrong* amount is
+far worse than a missing one.
+
+`MediaStore` is the same seam for WhatsApp media: `FixtureMediaStore` resolves ids from
+`fixtures/`, a real one would call the Graph API.
 
 ---
 
@@ -179,9 +208,10 @@ curl -X POST localhost:3000/api/webhooks/whatsapp \
 | Command | What it does |
 |---|---|
 | `npm run dev` | Dev server |
-| `npm run db:reset` | Drop, push schema, reseed |
+| `npm run db:reset` | Push schema and reseed (safe while `npm run dev` is running) |
 | `npm run db:studio` | Prisma Studio |
 | `npm run webhooks:demo` | Fire all sample payloads at a running server |
 | `npm run payloads:generate` | Rebuild `fixtures/payloads/` from the fixture documents |
+| `EXTRACTOR=llm npm run dev` | Run with the real Claude vision OCR (needs `ANTHROPIC_API_KEY`) |
 | `npm test` | Jest |
 | `npm run typecheck` | `tsc --noEmit` |

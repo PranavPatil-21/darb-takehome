@@ -116,7 +116,37 @@ Content-Type: application/json
   "attachments": []
 }
 
-### 7. Health checks
+### 7. Transactions — the re-match trigger.
+### Fire request 4's orphan receipt first (it lands UNMATCHED), then this. The response
+### reports which documents the new transaction rescued.
+POST {{baseUrl}}/api/transactions
+Content-Type: application/json
+
+{
+  "transactions": [
+    {
+      "clientId": 1,
+      "cardLast4": "4412",
+      "driverPhone": "966551234567",
+      "merchantName": "KUDU REST 118 RUH",
+      "amount": 3300,
+      "currency": "SAR",
+      "transactionAt": "2025-06-19T13:12:00Z"
+    }
+  ]
+}
+
+### 8. Transactions — malformed. Returns 400 with one issue per bad field.
+POST {{baseUrl}}/api/transactions
+Content-Type: application/json
+
+{
+  "transactions": [
+    { "clientId": 1, "cardLast4": "44", "merchantName": "", "amount": -5, "transactionAt": "nope" }
+  ]
+}
+
+### 9. Health checks
 GET {{baseUrl}}/api/webhooks/email
 
 ###

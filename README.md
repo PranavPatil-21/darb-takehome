@@ -52,7 +52,7 @@ It then posts the Kudu receipt's late-arriving transaction to `POST /api/transac
 which rescues that document automatically:
 
 ```json
-{"created":[17],"rematch":{"scanned":2,"changed":1,
+{"created":[23],"rematch":{"scanned":2,"changed":1,
  "documents":[{"documentId":4,"from":"UNMATCHED","to":"MATCHED"}]}}
 ```
 

@@ -275,12 +275,13 @@ protects nobody against a second browser tab.
 
 ## 5. Testing
 
-**117 tests across 7 suites.** Distribution follows the brief's instruction to put most
-effort into the matcher.
+**172 tests across 8 suites.** Distribution follows the brief's instruction to put most
+effort into the matcher — 88 of the 172 tests exercise the matching engine alone.
 
 | Suite | Tests | Covers |
 |---|---|---|
 | `transaction-matcher` | 33 | All six edge cases, signal behaviour, veto rules, purity, determinism |
+| `matcher-edge-cases` | 55 | Every threshold probed on both sides of its boundary |
 | `merchant` | 18 | Normalisation and similarity against real acquirer strings |
 | `document-ingestion` | 19 | Idempotency (including concurrent), failure isolation, scoping |
 | `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |
@@ -288,8 +289,21 @@ effort into the matcher.
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
 | `rematch` | 9 | Late-arriving transactions, sweep scope, no OCR replay |
 
-Two deliberate choices:
+Three deliberate choices:
 
+- **Every threshold is tested on both sides.** `matcher-edge-cases` exists because a test
+  sitting comfortably inside a band only proves the band exists; a test sitting exactly on
+  the edge proves the edge is in the right place and that the comparison is the right way
+  round. An off-by-one between `<` and `<=` in the scoring code is not an abstract defect —
+  it attaches a real receipt to the wrong transaction. So each constant in
+  `lib/matching/scoring-config.ts` is pinned at its exact value, one step inside, and one
+  step outside: the VAT plateau in both directions, a tip at exactly `MAX_TIP_RATIO` and one
+  halala past it, a gap of exactly `AMBIGUITY_MARGIN` and one hundredth under it, an
+  extraction confidence of exactly `MIN_EXTRACTION_CONFIDENCE_FOR_AUTO` and a hundredth
+  below. Alongside those sit the degenerate inputs that OCR actually produces — unparseable
+  dates, names that normalise away to nothing, 500-character merchant strings, emoji,
+  whitespace-padded card digits — each asserted to degrade to a null or a zero rather than
+  throw.
 - **Matcher tests are pure** — no database, no fixtures, no mocks. They run in ~0.1s.
 - **Ingestion and review tests hit a real SQLite database.** The properties under test are
   enforced by unique constraints; a mocked Prisma client would assert that the code

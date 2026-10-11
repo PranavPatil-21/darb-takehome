@@ -10,9 +10,12 @@ import { PrismaClient } from '@prisma/client';
  *  - Transaction 14 is byte-identical in amount/merchant/date to transaction 1 but belongs
  *    to a different client, which proves scoping is a filter rather than a tiebreaker.
  *  - Transaction 11 is a large corporate charge with no driver, reachable only by email.
- *  - Transactions 17-22 belong to one isolated driver (Saad, card 5520), one per scoring
- *    rule. Nothing else is scoped to that card, so those scenarios cannot perturb the
- *    ones above, and Layla (card 6604) deliberately has no transactions at all.
+ *  - Transactions 17-22 belong to one isolated driver (Saad, card 5520), each the target of
+ *    one demo scenario. Nothing else is scoped to that card, so those scenarios cannot
+ *    perturb the ones above. Six transactions carry eight scenarios: the second-receipt
+ *    case deliberately re-targets transaction 17, and Layla (card 6604) deliberately has
+ *    no transactions at all, which is the only way to reach NO_CANDIDATE_TRANSACTIONS
+ *    from a webhook.
  */
 
 const prisma = new PrismaClient();

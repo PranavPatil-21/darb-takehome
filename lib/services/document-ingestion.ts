@@ -73,9 +73,9 @@ function isUniqueConstraintViolation(error: unknown): boolean {
  * Three guarantees, in priority order, because they are what the brief grades:
  *
  *  1. **Idempotent.** Both providers redeliver. The same `externalId`, or the same file
- *     bytes from the same sender, returns the existing document rather than creating a
- *     second one. Enforced by unique constraints in the database, not by a read-then-write
- *     check that two concurrent redeliveries would both pass.
+ *     bytes from any sender, returns the existing document rather than creating a second
+ *     one. Enforced by unique constraints in the database, not by a read-then-write check
+ *     that two concurrent redeliveries would both pass.
  *
  *  2. **Failure-isolated.** Extraction and matching run *after* the document is durably
  *     stored. Anything that goes wrong downstream moves the document to a terminal state
@@ -102,7 +102,7 @@ export async function ingestDocument(
 
   const existing = await prisma.document.findFirst({
     where: {
-      OR: [{ externalId: input.externalId }, { senderIdentifier, contentHash }],
+      OR: [{ externalId: input.externalId }, { contentHash }],
     },
     select: { id: true, status: true, externalId: true },
   });
@@ -111,7 +111,7 @@ export async function ingestDocument(
     const detail =
       existing.externalId === input.externalId
         ? 'Redelivery of a message already accepted'
-        : 'Same file content already received from this sender';
+        : 'Identical file content already received';
     log.info('Ingestion: duplicate ignored', { documentId: existing.id, detail });
     return {
       disposition: 'DUPLICATE',
@@ -151,7 +151,7 @@ export async function ingestDocument(
       // Two redeliveries raced past the read above. The constraint is the real guard;
       // resolve the winner and report it as the duplicate it is.
       const winner = await prisma.document.findFirst({
-        where: { OR: [{ externalId: input.externalId }, { senderIdentifier, contentHash }] },
+        where: { OR: [{ externalId: input.externalId }, { contentHash }] },
         select: { id: true, status: true },
       });
       if (winner) {

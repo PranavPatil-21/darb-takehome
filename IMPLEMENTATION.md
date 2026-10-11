@@ -185,24 +185,27 @@ an **email address** to a client — which makes "an email document may only mat
 client's transactions" unimplementable as given. `SenderIdentity` is that missing link.
 It is the one schema extension that was not optional.
 
-### Changed: deduplication scope
+### Deduplication follows the brief exactly
 
-The brief specifies `contentHash String @unique`. I used `@@unique([senderIdentifier,
-contentHash])` plus a non-unique index on `contentHash` alone.
+`contentHash` is globally `@unique`, as specified: "the same file content (hash it) must
+not create a duplicate `Document`." A redelivery under a different `messageId`, or the
+same photo forwarded by a second person, resolves to the existing document and returns
+`DUPLICATE` — never a 500, and never a second row.
 
-A global unique constraint on file content says *no two documents in the entire system may
-ever be the same bytes*. Two drivers forwarding the same supplier receipt, or the same PDF
-reaching us through both the driver and the fleet manager, would collide — and the second
-submission, which is a legitimate compliance document for a different transaction, would
-be silently discarded. That failure is invisible until an audit.
+I considered scoping it to `@@unique([senderIdentifier, contentHash])` instead. The
+argument for scoping: two drivers forwarding the same supplier receipt would collide
+under a global constraint, and the second submission — a legitimate compliance document
+for a *different* transaction — is silently absorbed into the first. That is invisible
+until an audit.
 
-Scoping to the sender preserves exactly the property the brief asks for (redelivery of the
-same file by the same sender collapses) without the false positive. The separate
-`contentHash` index keeps cross-sender duplicates *detectable*, which is the right
-treatment: flag for review, do not drop.
+I implemented the brief's version. It is unambiguous about this, the collision is
+genuinely rare in the described workflow (drivers photograph their own receipts; the
+pixels differ), and inventing a different uniqueness rule would be me substituting my
+judgement for a stated requirement. The observation is recorded under § 7 as something to
+raise with the team rather than decide unilaterally.
 
-Both directions are tested — `collapses the same photo sent twice under different message
-ids`, and `treats the same file from a different sender as a separate document`.
+Both directions are tested: `collapses the same photo sent twice under different message
+ids`, and `collapses identical file content regardless of which sender submitted it`.
 
 ### Changed: scoping is a filter, not a scored signal
 
@@ -267,7 +270,7 @@ protects nobody against a second browser tab.
 
 ## 5. Testing
 
-**136 tests across 8 suites.** Distribution follows the brief's instruction to put most
+**115 tests across 7 suites.** Distribution follows the brief's instruction to put most
 effort into the matcher.
 
 | Suite | Tests | Covers |
@@ -276,7 +279,6 @@ effort into the matcher.
 | `merchant` | 18 | Normalisation and similarity against real acquirer strings |
 | `document-ingestion` | 18 | Idempotency (including concurrent), failure isolation, scoping |
 | `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |
-| `llm-extractor` | 21 | Money parsing, field normalisation, provider input validation |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
 | `rematch` | 9 | Late-arriving transactions, sweep scope, no OCR replay |
@@ -305,27 +307,28 @@ under test is the production one.
 
 ## 6. Bonus items
 
-The brief lists five. Four are implemented; the fifth is a sketch, which the brief
-explicitly permits.
+The brief lists five. Four are implemented. The fifth is a design sketch, which is what
+the brief asks for — see § 7.
 
 | Bonus | Status |
 |---|---|
 | `/review` page with ranked candidates | Built |
 | Re-match `UNMATCHED` documents when transactions arrive | Built, **with a trigger** |
 | Webhook signature verification (HMAC) | Built |
-| Real extractor behind the same interface | Built; mock remains the default |
-| Multi-transaction invoice | Design sketch (see § 7) |
+| Multi-transaction invoice | Design sketch (§ 7) — *"a design sketch is enough"* |
+| Swap the mock for a real extractor | Not built — see below |
 
 ### The re-match trigger — why `POST /api/transactions` exists
 
-The sweep service alone would have been a capability with no caller: nothing in the
-system created transactions, so no code path could ever have invoked it. A reviewer
-reading `rematch.ts` would have found a well-tested function that production never runs.
+The bonus is "re-run matching for `UNMATCHED` documents **when new transactions are
+ingested**". A sweep service alone would not satisfy that: nothing in the system created
+transactions, so no code path could ever invoke it. A reviewer reading `rematch.ts` would
+have found a well-tested function that production never runs.
 
-`app/api/transactions/route.ts` closes the loop. It validates and inserts a batch of
-transactions, then sweeps the unmatched backlog **for the affected clients only** — a
-global sweep would rescan every unmatched document in the system on every batch — and
-reports what it rescued:
+`app/api/transactions/route.ts` closes the loop. It validates and inserts a batch, then
+sweeps the unmatched backlog **for the affected clients only** — a global sweep would
+rescan every unmatched document in the system on every batch — and reports what it
+rescued:
 
 ```json
 {"created":[17],"rematch":{"scanned":2,"changed":1,
@@ -334,51 +337,23 @@ reports what it rescued:
 
 Re-matching never re-runs OCR. The extraction is already persisted on the `Document` row,
 and OCR is the expensive, non-deterministic, paid part of the pipeline — replaying it on
-every new transaction would be the costliest possible mistake here. A test asserts this
-by swapping in an extractor that throws if called.
+every new transaction would be the costliest possible mistake here. A test asserts this by
+substituting an extractor that throws if it is ever called.
 
-### The real extractor
+### Not built: a real extractor
 
-`LlmVisionExtractor` uses Claude vision and implements the same `DocumentExtractor`
-interface as the mock. Selection happens in one place (`lib/extraction/index.ts`) via
-`EXTRACTOR=llm`; the SDK is imported lazily so the default path never loads it, and a
-missing API key logs a warning and falls back rather than refusing to boot.
+The seam is in place and is the thing the brief actually grades — "keep the pipeline coded
+against the interface so a real provider could be swapped in". `MockExtractor` is the only
+implementation, selected in one place (`lib/extraction/index.ts`), and no other file knows
+a concrete extractor exists. Adding a provider is a change to that file alone.
 
-Two decisions worth defending:
-
-**Money is parsed in code, not by the model.** The schema asks for `totalAmount` as the
-decimal string exactly as printed (`"125.00"`), never as pre-multiplied halalas. Asking a
-language model to perform the ×100 conversion puts arithmetic in the path of the single
-field the matcher weights most heavily, and a *wrong* amount is far worse than a missing
-one — it produces a confident match against the wrong transaction, which is precisely the
-failure this system exists to prevent. `parseMinorUnits` does the conversion, is pure, and
-has 7 tests.
-
-Writing those tests found two real bugs in my first version. Stripping all whitespace
-turned `"1 2 5"` — an unreadable scan — into a confident `12500`. Stripping all commas
-turned `"125,00"`, a decimal comma, into `1250000`: a hundredfold error. Both now return
-`null`, which the matcher already handles as "signal unavailable".
-
-**Generation is constrained by JSON Schema; validation is Zod.** The SDK's Zod helper
-targets Zod 4 and this project is pinned to Zod 3 by the brief, so the schema is written
-out as JSON Schema for the API and `extractionSchema` validates what comes back. That
-split is worth keeping regardless of the version mismatch: the JSON Schema constrains
-generation, the Zod schema is the trust boundary, and an output that satisfies one but not
-the other is caught rather than assumed away.
-
-A declined request (`stop_reason: "refusal"`) returns HTTP 200 with empty content, so it
-is checked before reading `content` — otherwise the pipeline would crash on an array
-index rather than degrade. It becomes an `ExtractionError`, which the pipeline already
-routes to `FAILED`. I did not add server-side fallbacks: on a receipt-OCR workload a
-policy refusal is close to impossible, the pipeline already degrades safely, and the
-added branching would obscure the part of this file worth reading.
+I did not add one. The brief makes the mock the default explicitly so reviewers can run
+without keys, and a second implementation would add a dependency and a credential path
+without demonstrating anything the interface does not already demonstrate.
 
 ---
 
 ## 7. What I would do next
-
-**Swap the fixture `MediaStore` for the real Graph API.** The OCR seam now has a real
-implementation behind it; the media seam still does not. It is the same shape of change.
 
 **Move processing off the webhook thread.** Steps 4–7 run inline. Storage already happens
 first, so the structure is right, but a real deployment should enqueue after persisting
@@ -391,17 +366,58 @@ storage keyed by `contentHash` so a document can be re-extracted when the OCR mo
 improves, and so a reviewer can *see the receipt* — which today they cannot, and which is
 the single biggest gap in the review UI.
 
-**Multi-transaction invoices** (design sketch, as the brief permits). A monthly fleet
-statement covers many transactions, so the current one-document-one-transaction model does
-not fit. I would:
-- add `lineItems Json` to the extraction, and a `DocumentLineItem` model;
-- match each line item independently through the existing engine, reusing all the scoring;
-- replace `Transaction.confirmedDocumentId` with a nullable `confirmedLineItemId`, which
-  keeps the compare-and-set guarantee intact at line-item granularity;
-- add a reconciliation check that line-item totals sum to the invoice total, as a strong
-  corroborating signal — if 11 of 12 lines match confidently, the twelfth is near-certain.
+### Multi-transaction invoices — design sketch
 
-The matcher needs no change; it already matches "an extracted thing" to "a transaction".
+*The brief says a sketch is enough here, so this is a sketch rather than an
+implementation. It is the design I would build.*
+
+A monthly fleet statement covers many transactions at once, which the current
+one-document-one-transaction model cannot express.
+
+**Model it by changing the unit of claim, not by adding a special case.** A receipt makes
+one claim about money ("someone paid 125.00 at Alfanar on 14 June"); a statement makes one
+per line. So rather than teaching the system about statements, I would make *every*
+document a list of claims — a plain receipt simply has a list of one:
+
+- a `DocumentLineItem` model (`documentId`, `lineNumber`, `merchantName?`, `amount?`,
+  `lineDate?`, `cardLast4?`, `reference?`, `status`), with nullable fields because a
+  statement line usually omits what the header already states;
+- `DocumentMatch` keyed on `lineItemId` instead of `documentId`;
+- `Transaction.confirmedDocumentId` becomes `confirmedLineItemId`, keeping the
+  compare-and-set guarantee from § 4 intact at line granularity.
+
+The matching engine itself needs **no change**. It already matches "an extracted thing" to
+a transaction, and a line item is that thing — the claim handed to it fills blank line
+fields from the document header. The alternative (leaving matches on `Document` and adding
+an optional line reference) would leave two confirmation paths on `Transaction` forever,
+with a rule about which one wins.
+
+**Three things that are not obvious until you work them through:**
+
+*Lines compete for transactions.* Matching each line independently lets two lines both
+claim the same transaction. I would resolve this greedily — rank every (line, candidate)
+pair by confidence and assign in order, skipping lines and transactions already taken —
+with one addition: if a line's winning candidate was also ranked within `AMBIGUITY_MARGIN`
+by another line, demote it to review. That is the same rule § 2 already defends, applied
+across lines instead of within one. True optimality is an assignment problem (Hungarian
+algorithm); greedy-plus-contest-demotion is explainable to a reviewer, which matters more
+here than optimality.
+
+*Reconciliation is corroboration, not identification.* If the line amounts sum to the
+invoice total, that is strong evidence the set is complete — so if 11 of 12 lines matched
+confidently, the twelfth is near-certain. I would promote that last line only when: the
+amounts reconcile, every other line matched, it has exactly one candidate above the review
+floor, that transaction is not already documented, **and** the line has its own readable
+amount above the VAT-rounding band. Without that last condition, "the totals add up" would
+be the only evidence — and promoting on merchant and date alone is precisely what
+`WEAK_EVIDENCE_CONFIDENCE_CAP` exists to prevent. The sum tolerance should scale with line
+count (`VAT_ROUNDING_TOLERANCE_HALALAS × lines`), since per-line rounding accumulates.
+
+*Document status becomes derived.* A document would be `MATCHED` only when every line is,
+`PARTIALLY_MATCHED` when some are, `NEEDS_REVIEW` whenever any line needs a human. The
+important part is that exactly one function computes it and every mutation path calls it —
+four call sites each rolling up independently is how a document ends up reading `MATCHED`
+with an unmatched line underneath.
 
 **Learn the thresholds.** Every reviewer decision is labelled training data — the
 `signals` JSON is a feature vector and the confirm/reject is the label. After a few
@@ -416,6 +432,13 @@ one is the honest measure of whether the scoring is any good, and it is free to 
 
 **Per-client tuning.** A restaurant fleet and a logistics fleet have very different tip
 distributions. `MAX_TIP_RATIO` wants to be per-client, or per-merchant-category.
+
+**Raise the global content-hash question with the team.** Implemented as specified (§ 3),
+`contentHash @unique` means two people forwarding the same supplier PDF produce one
+document, and the second submission is absorbed. If that case turns out to be real in
+production, the fix is to scope uniqueness to the sender and surface cross-sender
+duplicates as a review reason rather than dropping them — but that changes a stated
+requirement, so it is a conversation, not a unilateral decision.
 
 ---
 

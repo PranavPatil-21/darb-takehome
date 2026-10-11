@@ -20,7 +20,6 @@
     "payloads:generate": "tsx scripts/generate-payloads.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.133.0",
     "@prisma/client": "^6.19.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

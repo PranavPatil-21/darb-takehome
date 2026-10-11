@@ -118,7 +118,10 @@ describe('edge case 4: idempotency', () => {
     expect(ids.size).toBe(1);
   });
 
-  it('treats the same file from a different sender as a separate document', async () => {
+  it('collapses identical file content regardless of which sender submitted it', async () => {
+    // The brief is explicit: "the same file content (hash it) must not create a duplicate
+    // Document", and `contentHash` is globally unique. So a second driver forwarding the
+    // same photo resolves to the first driver's document rather than creating its own.
     await testPrisma.senderIdentity.create({
       data: {
         identifier: '966557778888',
@@ -129,15 +132,15 @@ describe('edge case 4: idempotency', () => {
       },
     });
 
-    await ingestDocument(whatsappInput(), testPrisma);
-    await ingestDocument(
+    const first = await ingestDocument(whatsappInput(), testPrisma);
+    const second = await ingestDocument(
       whatsappInput({ externalId: 'wamid.OTHER', senderIdentifier: '966557778888' }),
       testPrisma,
     );
 
-    // Two drivers may legitimately submit the same supplier receipt; dropping the second
-    // would destroy one of them's VAT evidence.
-    expect(await testPrisma.document.count()).toBe(2);
+    expect(second.disposition).toBe('DUPLICATE');
+    expect(second.documentId).toBe(first.documentId);
+    expect(await testPrisma.document.count()).toBe(1);
   });
 });
 

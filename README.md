@@ -65,7 +65,7 @@ Client, including the malformed payloads that return `400`.
 ## Tests
 
 ```bash
-npm test           # 136 tests, 8 suites
+npm test           # 115 tests, 7 suites
 npm run typecheck  # tsc --noEmit, strict
 npm run build      # production build
 ```
@@ -75,7 +75,6 @@ Integration tests create their own throwaway `prisma/test.db`; they do not touch
 | Suite | Tests | Covers |
 |---|---|---|
 | `transaction-matcher` | 32 | All six brief edge cases, vetoes, purity, determinism |
-| `llm-extractor` | 21 | Money parsing, field normalisation, provider input validation |
 | `merchant` | 18 | Normalisation and similarity on real acquirer strings |
 | `document-ingestion` | 18 | Idempotency incl. concurrent, failure isolation, scoping |
 | `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |
@@ -96,9 +95,7 @@ app/
   page.tsx                          pipeline overview
 lib/
   domain/enums.ts                   union types + Zod at the persistence boundary
-  extraction/                       DocumentExtractor interface
-    mock-extractor.ts               fixture-backed, the default
-    llm-extractor.ts                real Claude vision OCR behind the same interface
+  extraction/                       DocumentExtractor interface + MockExtractor
   matching/
     scoring-config.ts               every threshold, with its reasoning
     merchant.ts                     normalisation + similarity
@@ -159,23 +156,10 @@ export interface DocumentExtractor {
 }
 ```
 
-`LlmVisionExtractor` (`lib/extraction/llm-extractor.ts`) is a working implementation
-using Claude vision. Turn it on with:
-
-```bash
-EXTRACTOR=llm ANTHROPIC_API_KEY=sk-ant-... npm run dev
-```
-
-The mock stays the default so the repository runs with no keys, and an `EXTRACTOR=llm`
-with no key logs a warning and falls back rather than refusing to boot. Nothing else in
-the codebase changes — the pipeline, the matcher, and every test are unaware of which
-implementation is running, which is the point of the seam.
-
-One deliberate detail: the model is asked for the amount as the decimal string exactly as
-printed (`"125.00"`), never as pre-multiplied minor units. The ×100 conversion happens in
-`parseMinorUnits`, which is pure and unit-tested — a language model doing arithmetic on
-the field the matcher weights most heavily is an avoidable risk, and a *wrong* amount is
-far worse than a missing one.
+`MockExtractor` is the only implementation and is selected in one place
+(`lib/extraction/index.ts`). No other file in the codebase knows a concrete extractor
+exists, so adding a real provider — LLM vision, Textract, Document AI — is a change to
+that one file. The mock stays the default so the repository runs with no keys.
 
 `MediaStore` is the same seam for WhatsApp media: `FixtureMediaStore` resolves ids from
 `fixtures/`, a real one would call the Graph API.
@@ -212,6 +196,5 @@ curl -X POST localhost:3000/api/webhooks/whatsapp \
 | `npm run db:studio` | Prisma Studio |
 | `npm run webhooks:demo` | Fire all sample payloads at a running server |
 | `npm run payloads:generate` | Rebuild `fixtures/payloads/` from the fixture documents |
-| `EXTRACTOR=llm npm run dev` | Run with the real Claude vision OCR (needs `ANTHROPIC_API_KEY`) |
 | `npm test` | Jest |
 | `npm run typecheck` | `tsc --noEmit` |

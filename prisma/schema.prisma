@@ -85,8 +85,9 @@ model Document {
   source           String
   /// Provider message id — messageId for email, wamid for WhatsApp.
   externalId       String  @unique
-  /// SHA-256 of the file bytes.
-  contentHash      String
+  /// SHA-256 of the file bytes. Unique, per the brief: the same file content must never
+  /// create a second Document, whoever sent it.
+  contentHash      String  @unique
   /// Email address or phone that sent it. Resolves to a SenderIdentity.
   senderIdentifier String
   /// Resolved scope, denormalised at ingestion so matching needs no extra joins.
@@ -117,12 +118,6 @@ model Document {
   matches                 DocumentMatch[]
   confirmedForTransaction Transaction?    @relation("ConfirmedDocument")
 
-  /// Redelivery of the same file by the same sender is the duplicate we must collapse.
-  /// Scoped rather than global on purpose — see IMPLEMENTATION.md "Deduplication scope".
-  @@unique([senderIdentifier, contentHash])
-  /// Non-unique: lets us *detect* the same file arriving from a different sender and
-  /// flag it for review, instead of silently dropping a second driver's VAT evidence.
-  @@index([contentHash])
   @@index([status])
 }
 

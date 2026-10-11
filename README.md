@@ -65,7 +65,7 @@ Client, including the malformed payloads that return `400`.
 ## Tests
 
 ```bash
-npm test           # 116 tests, 7 suites
+npm test           # 117 tests, 7 suites
 npm run typecheck  # tsc --noEmit, strict
 npm run build      # production build
 ```
@@ -74,7 +74,7 @@ Integration tests create their own throwaway `prisma/test.db`; they do not touch
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `transaction-matcher` | 32 | All six brief edge cases, vetoes, purity, determinism |
+| `transaction-matcher` | 33 | All six brief edge cases, vetoes, purity, determinism |
 | `merchant` | 18 | Normalisation and similarity on real acquirer strings |
 | `document-ingestion` | 19 | Idempotency incl. concurrent, failure isolation, scoping |
 | `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |
@@ -126,9 +126,9 @@ are present**:
 | Merchant (fuzzy) | 0.20 |
 | Date proximity | 0.15 |
 
-A signal that could not be read is `null` and is excluded from the average — the
-remaining weights renormalise. `null` ("not on the document") and `0` ("present and
-contradictory") are different claims and are never conflated.
+A signal that could not be read is **omitted** from the breakdown and excluded from the
+average — the remaining weights renormalise. "Not on the document" (no key) and `0`
+("present and contradictory") are different claims and are never conflated.
 
 Outcomes:
 

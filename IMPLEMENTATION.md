@@ -61,15 +61,20 @@ the engine is a one-file diff.
 
 ### Missing signals are renormalised, not zeroed
 
-A signal that could not be read returns `null`, is **excluded from the weighted average**,
-and the remaining weights are renormalised.
+A signal that could not be read is **omitted from the breakdown**, excluded from the
+weighted average, and the remaining weights are renormalised.
 
 This is the single most consequential choice in the scoring code. Scoring a missing card
 number as `0` would mean most receipts could never clear the auto-match threshold, and
-the system would push into manual review exactly the work it exists to remove. `null`
-("not on the document") and `0` ("on the document and contradictory") are different
-claims, and the stored breakdown preserves the difference so a reviewer sees `n/a`
-rather than a zero bar.
+the system would push into manual review exactly the work it exists to remove. "Not on
+the document" and "on the document and contradictory" are different claims, and the
+stored breakdown preserves the difference: an unavailable signal has no key at all, a
+contradictory one has a key whose value is `0`. The reviewer sees `n/a` rather than a
+zero bar.
+
+Omission rather than a `null` value is also what keeps the stored shape exactly the
+`Record<string, number>` the brief specifies — callers test availability with
+`'cardLast4' in signals`.
 
 The emailed tax invoice fixture demonstrates this: it has no card number at all and still
 auto-matches at 100%, on amount + merchant + date renormalised to 1.0.
@@ -270,12 +275,12 @@ protects nobody against a second browser tab.
 
 ## 5. Testing
 
-**116 tests across 7 suites.** Distribution follows the brief's instruction to put most
+**117 tests across 7 suites.** Distribution follows the brief's instruction to put most
 effort into the matcher.
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `transaction-matcher` | 32 | All six edge cases, signal behaviour, veto rules, purity, determinism |
+| `transaction-matcher` | 33 | All six edge cases, signal behaviour, veto rules, purity, determinism |
 | `merchant` | 18 | Normalisation and similarity against real acquirer strings |
 | `document-ingestion` | 19 | Idempotency (including concurrent), failure isolation, scoping |
 | `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |

@@ -24,10 +24,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+    // The font variables must sit on <html>, not <body>: globals.css applies
+    // `font-sans` to the html element, and CSS custom properties inherit downward only.
+    // Defined on <body> they are invisible to <html>, and every surface silently falls
+    // back to the browser's default serif.
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
+      <body className="antialiased">
         {children}
       </body>
     </html>

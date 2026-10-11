@@ -1,3 +1,6 @@
+/* `shadcn` is a runtime dependency because of the CSS import below, not because any
+   TypeScript file imports it. Removing it from package.json type-checks and tests
+   clean, then fails the production build here. */
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";

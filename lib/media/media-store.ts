@@ -35,6 +35,7 @@ const MEDIA_MAP: Readonly<Record<string, string>> = {
   media_4474: 'whatsapp-orphan-receipt',
   media_4475: 'whatsapp-blurry-garbage',
   media_4476: 'whatsapp-petromin-generic',
+  media_4477: 'whatsapp-nujood-sends-alfanar',
 };
 
 export class FixtureMediaStore implements MediaStore {

@@ -41,10 +41,10 @@ decided for each, annotated with the behaviour it demonstrates. Expected output:
 | `whatsapp-04-orphan` | `UNMATCHED` | No such transaction — retryable |
 | `whatsapp-05-garbage` | `UNMATCHED` | OCR returned noise, no crash |
 | `whatsapp-06-generic-merchant` | `AUTO_MATCHED` 98% | Picks Petromin over Alfanar |
-| `whatsapp-07-wrong-client` | `UNMATCHED` | Scoping + card veto |
+| `whatsapp-07-wrong-client` | `UNMATCHED` | Another client's driver; scoping blocks it |
 | `email-01-tax-invoice` | `AUTO_MATCHED` 100% | No card number; signals renormalise |
 | `email-02-low-confidence` | `NEEDS_REVIEW` | Signals agree, OCR confidence 0.42 |
-| `email-03-unknown-sender` | `UNMATCHED` | Sender not registered |
+| `email-03-unknown-sender` | `UNMATCHED` | No `SenderIdentity` for this address |
 
 It then posts the Kudu receipt's late-arriving transaction to `POST /api/transactions`,
 which rescues that document automatically:
@@ -65,7 +65,7 @@ Client, including the malformed payloads that return `400`.
 ## Tests
 
 ```bash
-npm test           # 115 tests, 7 suites
+npm test           # 116 tests, 7 suites
 npm run typecheck  # tsc --noEmit, strict
 npm run build      # production build
 ```
@@ -76,7 +76,7 @@ Integration tests create their own throwaway `prisma/test.db`; they do not touch
 |---|---|---|
 | `transaction-matcher` | 32 | All six brief edge cases, vetoes, purity, determinism |
 | `merchant` | 18 | Normalisation and similarity on real acquirer strings |
-| `document-ingestion` | 18 | Idempotency incl. concurrent, failure isolation, scoping |
+| `document-ingestion` | 19 | Idempotency incl. concurrent, failure isolation, scoping |
 | `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
@@ -109,7 +109,7 @@ lib/
   actions/review.ts                 confirm / reject server actions
   webhooks/                         Zod schemas, HMAC, response helpers
 prisma/schema.prisma, seed.ts       2 clients · 6 senders · 16 transactions
-fixtures/                           8 documents + generated webhook payloads
+fixtures/                           10 documents + generated webhook payloads
 ```
 
 ---

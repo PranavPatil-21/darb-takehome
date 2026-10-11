@@ -139,13 +139,14 @@ write(
 
 write(
   'whatsapp-07-wrong-client',
-  // Same driver number as a Nujood driver, same photo as the Alfanar receipt. Proves the
-  // document cannot reach Rawabi's identical transaction.
+  // A Nujood driver sends a receipt whose fields match a *Rawabi* transaction exactly.
+  // Its own document (media_4477, distinct bytes from media_4471) so it is genuinely
+  // ingested rather than deduplicated — proving scoping, not idempotency.
   whatsappPayload({
     wamid: 'wamid.HBgMOTY2NTYxMTEyMjMzAA==',
     from: '966561112233',
     timestamp: '1749899520',
-    mediaId: 'media_4471',
+    mediaId: 'media_4477',
     mimeType: 'image/jpeg',
   }),
 );
@@ -176,11 +177,12 @@ write(
 
 write(
   'email-03-unknown-sender',
+  // Its own document, so the unknown-sender path is exercised rather than deduplication.
   emailPayload({
     messageId: 'msg_8f2a3',
     from: 'someone@not-a-customer.example',
     subject: 'Invoice',
     receivedAt: '2025-06-14T10:00:00Z',
-    slug: 'email-alfanar-invoice',
+    slug: 'email-stranger-invoice',
   }),
 );

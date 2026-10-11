@@ -236,6 +236,36 @@ describe('scoping', () => {
     expect(result.match?.candidates[0].transactionId).toBe(11);
   });
 
+  it("refuses a receipt whose fields match another client's transaction exactly", async () => {
+    // The Nujood driver's receipt is a perfect match for Rawabi's transaction 1 — same
+    // merchant, amount, date and card. Scope is what keeps it apart, and nothing else
+    // would: every scored signal agrees.
+    await testPrisma.senderIdentity.create({
+      data: {
+        identifier: '966561112233',
+        channel: 'WHATSAPP',
+        clientId: 2,
+        driverPhone: '966561112233',
+        label: 'Yusuf Idris',
+      },
+    });
+
+    const result = await ingestDocument(
+      whatsappInput({
+        externalId: 'wamid.NUJOOD',
+        senderIdentifier: '966561112233',
+        bytes: readFixtureFile('whatsapp-nujood-sends-alfanar'),
+      }),
+      testPrisma,
+    );
+
+    expect(result.disposition).toBe('INGESTED');
+    expect(result.status).toBe('UNMATCHED');
+    expect(await testPrisma.documentMatch.count({ where: { documentId: result.documentId } })).toBe(
+      0,
+    );
+  });
+
   it('normalises sender identifiers before looking them up', () => {
     expect(normaliseSenderIdentifier('EMAIL', '  Billing@Alfanar-Fuel.com.SA ')).toBe(
       'billing@alfanar-fuel.com.sa',

@@ -270,14 +270,14 @@ protects nobody against a second browser tab.
 
 ## 5. Testing
 
-**115 tests across 7 suites.** Distribution follows the brief's instruction to put most
+**116 tests across 7 suites.** Distribution follows the brief's instruction to put most
 effort into the matcher.
 
 | Suite | Tests | Covers |
 |---|---|---|
 | `transaction-matcher` | 32 | All six edge cases, signal behaviour, veto rules, purity, determinism |
 | `merchant` | 18 | Normalisation and similarity against real acquirer strings |
-| `document-ingestion` | 18 | Idempotency (including concurrent), failure isolation, scoping |
+| `document-ingestion` | 19 | Idempotency (including concurrent), failure isolation, scoping |
 | `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |

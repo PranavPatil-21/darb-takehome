@@ -43,7 +43,7 @@ send whatsapp whatsapp-03-tip-mismatch    "Receipt 57.50 vs charge 63.25 (tip) �
 send whatsapp whatsapp-04-orphan          "Good receipt, no such transaction → UNMATCHED (retryable later)."
 send whatsapp whatsapp-05-garbage         "OCR returned noise → terminal state, no crash."
 send whatsapp whatsapp-06-generic-merchant "Petromin vs Alfanar: both 'FUEL STATION' → still picks Petromin."
-send whatsapp whatsapp-07-wrong-client    "Nujood driver sends Rawabi's receipt: scoping hides Rawabi's identical txn, card veto kills their own."
+send whatsapp whatsapp-07-wrong-client    "Nujood driver sends a receipt matching a Rawabi transaction exactly → scoping blocks it."
 
 send email    email-01-tax-invoice        "Tax invoice, no card number → auto-matches via renormalised signals."
 send email    email-02-low-confidence     "Signals agree but OCR confidence is 0.42 → NEEDS_REVIEW."

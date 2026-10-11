@@ -1,0 +1,25 @@
+{
+  "entry": [
+    {
+      "changes": [
+        {
+          "value": {
+            "messages": [
+              {
+                "id": "wamid.HBgMOTY2NTU0NDQwMDAyDw==",
+                "from": "966554440002",
+                "timestamp": "1751114400",
+                "type": "image",
+                "image": {
+                  "id": "media_4485",
+                  "mime_type": "image/jpeg",
+                  "sha256": "b7e204"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

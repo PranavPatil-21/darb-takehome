@@ -36,6 +36,14 @@ const MEDIA_MAP: Readonly<Record<string, string>> = {
   media_4475: 'whatsapp-blurry-garbage',
   media_4476: 'whatsapp-petromin-generic',
   media_4477: 'whatsapp-nujood-sends-alfanar',
+  media_4478: 'whatsapp-bindawood-vat',
+  media_4479: 'whatsapp-aramex-datedrift',
+  media_4480: 'whatsapp-extra-cardveto',
+  media_4481: 'whatsapp-noon-currency',
+  media_4482: 'whatsapp-albaik-undercharge',
+  media_4483: 'whatsapp-bindawood-second',
+  media_4484: 'whatsapp-danube-faded',
+  media_4485: 'whatsapp-newdriver-tamimi',
 };
 
 export class FixtureMediaStore implements MediaStore {

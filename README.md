@@ -29,8 +29,10 @@ Then, in a second terminal:
 npm run webhooks:demo
 ```
 
-That fires eleven sample payloads through both webhooks and prints what the pipeline
-decided for each, annotated with the behaviour it demonstrates. Expected output:
+That fires nineteen sample payloads through both webhooks and prints what the pipeline
+decided for each, annotated with the behaviour it demonstrates. Between them they reach
+**every one of the nine reason codes the matcher can return**, so the script doubles as an
+executable tour of the engine. Expected output:
 
 | Payload | Outcome | Why |
 |---|---|---|
@@ -54,6 +56,21 @@ which rescues that document automatically:
  "documents":[{"documentId":4,"from":"UNMATCHED","to":"MATCHED"}]}}
 ```
 
+Finally it fires eight scenarios that each isolate one scoring rule. They belong to a
+driver (card `5520`) nothing else is scoped to, so they cannot become stray candidates for
+the scenarios above — or for each other:
+
+| Payload | Outcome | Rule it isolates |
+|---|---|---|
+| `whatsapp-08-vat-rounding` | `AUTO_MATCHED` 99% | Receipt 88.45 vs charge 88.50 — VAT rounding inside tolerance |
+| `whatsapp-09-date-drift` | `AUTO_MATCHED` 90% | Dated six days before settlement; the date is a weight, not a veto |
+| `whatsapp-10-card-veto` | `UNMATCHED` | Everything agrees except the card digits |
+| `whatsapp-11-currency-mismatch` | `UNMATCHED` | 199.00 USD against a 199.00 SAR charge |
+| `whatsapp-12-undercharge` | `UNMATCHED` | Receipt 150.00, card paid 140.00 — no tip explains that |
+| `whatsapp-13-second-receipt` | `NEEDS_REVIEW` 100% | A second claim on a transaction already documented |
+| `whatsapp-14-faded-receipt` | `NEEDS_REVIEW` 60% | Merchant and date only — capped below the auto bar |
+| `whatsapp-15-new-driver` | `UNMATCHED` | Driver onboarded before any of her transactions posted |
+
 Open **http://localhost:3000** for the pipeline overview and
 **http://localhost:3000/review** to confirm or reject candidates.
 
@@ -65,7 +82,7 @@ Client, including the malformed payloads that return `400`.
 ## Tests
 
 ```bash
-npm test           # 172 tests, 8 suites
+npm test           # 176 tests, 9 suites
 npm run typecheck  # tsc --noEmit, strict
 npm run build      # production build
 ```
@@ -108,7 +125,7 @@ lib/
     rematch.ts                      re-match sweep for late transactions
   actions/review.ts                 confirm / reject server actions
   webhooks/                         Zod schemas, HMAC, response helpers
-prisma/schema.prisma, seed.ts       2 clients · 6 senders · 16 transactions
+prisma/schema.prisma, seed.ts       2 clients · 8 senders · 22 transactions
 fixtures/                           10 documents + generated webhook payloads
 ```
 

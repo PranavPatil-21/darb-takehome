@@ -10,6 +10,9 @@ import { PrismaClient } from '@prisma/client';
  *  - Transaction 14 is byte-identical in amount/merchant/date to transaction 1 but belongs
  *    to a different client, which proves scoping is a filter rather than a tiebreaker.
  *  - Transaction 11 is a large corporate charge with no driver, reachable only by email.
+ *  - Transactions 17-22 belong to one isolated driver (Saad, card 5520), one per scoring
+ *    rule. Nothing else is scoped to that card, so those scenarios cannot perturb the
+ *    ones above, and Layla (card 6604) deliberately has no transactions at all.
  */
 
 const prisma = new PrismaClient();
@@ -71,6 +74,22 @@ async function main() {
         clientId: nujood.id,
         driverPhone: null,
         label: 'Nujood accounts inbox',
+      },
+      {
+        identifier: '966554440001',
+        channel: 'WHATSAPP',
+        clientId: rawabi.id,
+        driverPhone: '966554440001',
+        label: 'Saad Al-Dossari (driver, card 5520)',
+      },
+      {
+        // Onboarded, but none of her transactions have posted yet. The only way to reach
+        // NO_CANDIDATE_TRANSACTIONS from a webhook rather than a unit test.
+        identifier: '966554440002',
+        channel: 'WHATSAPP',
+        clientId: rawabi.id,
+        driverPhone: '966554440002',
+        label: 'Layla Al-Qahtani (driver, card 6604 — newly onboarded)',
       },
     ],
   });
@@ -227,6 +246,67 @@ async function main() {
         merchantName: 'TAMIMI MARKETS 0007 RUH',
         amount: 14300,
         transactionAt: at('2025-06-18T08:30:00Z'),
+      },
+
+      /* --- Rawabi · Saad · card 5520 -----------------------------------
+       *
+       * A deliberately isolated driver. Every scenario below exercises one scoring rule,
+       * and because no other fixture is scoped to this card, none of them can become a
+       * stray candidate for the scenarios above — or for each other.
+       */
+      {
+        id: 17,
+        clientId: rawabi.id,
+        cardLast4: '5520',
+        driverPhone: '966554440001',
+        merchantName: 'BIN DAWOOD MARKET 31 RUH',
+        amount: 8850, // receipt reads 88.45 — five halalas of VAT rounding
+        transactionAt: at('2025-06-21T10:05:00Z'),
+      },
+      {
+        id: 18,
+        clientId: rawabi.id,
+        cardLast4: '5520',
+        driverPhone: '966554440001',
+        merchantName: 'ARAMEX SHIPPING RUH',
+        amount: 4800, // receipt dated 17 June; this settled on the 23rd
+        transactionAt: at('2025-06-23T09:00:00Z'),
+      },
+      {
+        id: 19,
+        clientId: rawabi.id,
+        cardLast4: '5520',
+        driverPhone: '966554440001',
+        merchantName: 'EXTRA STORES RUH',
+        amount: 27500, // receipt agrees on everything except the card digits
+        transactionAt: at('2025-06-24T15:20:00Z'),
+      },
+      {
+        id: 20,
+        clientId: rawabi.id,
+        cardLast4: '5520',
+        driverPhone: '966554440001',
+        merchantName: 'NOON COM FZ LLC',
+        amount: 19900, // 199.00 SAR; the receipt says 199.00 USD
+        transactionAt: at('2025-06-25T11:00:00Z'),
+      },
+      {
+        id: 21,
+        clientId: rawabi.id,
+        cardLast4: '5520',
+        driverPhone: '966554440001',
+        merchantName: 'AL BAIK RESTAURANT RUH',
+        amount: 14000, // receipt says 150.00 — the card paid less, which a tip cannot explain
+        transactionAt: at('2025-06-26T20:15:00Z'),
+      },
+      {
+        id: 22,
+        clientId: rawabi.id,
+        cardLast4: '5520',
+        driverPhone: '966554440001',
+        merchantName: 'DANUBE HYPERMARKET RUH',
+        amount: 23400, // the matching receipt has faded past its amount line
+        transactionAt: at('2025-06-27T17:45:00Z'),
       },
     ],
   });

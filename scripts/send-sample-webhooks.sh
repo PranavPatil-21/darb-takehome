@@ -64,4 +64,19 @@ else
   printf '%s\n\n' "$response"
 fi
 
+echo
+bold "─── Scoring rules, one scenario each ───"
+dim  "Driver Saad (card 5520) exists only for these. Nothing else is scoped to that card,"
+dim  "so each scenario isolates exactly one rule."
+echo
+
+send whatsapp whatsapp-08-vat-rounding      "Receipt 88.45 vs charge 88.50 - VAT rounding, inside tolerance -> AUTO_MATCHED."
+send whatsapp whatsapp-09-date-drift        "Receipt dated six days before settlement -> still AUTO_MATCHED, at 0.895 not 0.99."
+send whatsapp whatsapp-10-card-veto         "Everything agrees except the card digits -> vetoed, UNMATCHED."
+send whatsapp whatsapp-11-currency-mismatch "199.00 USD against a 199.00 SAR charge -> vetoed, UNMATCHED."
+send whatsapp whatsapp-12-undercharge       "Receipt 150.00, card paid 140.00 - no tip explains that -> vetoed, UNMATCHED."
+send whatsapp whatsapp-13-second-receipt    "Cardholder slip for a transaction already documented -> TRANSACTION_ALREADY_DOCUMENTED."
+send whatsapp whatsapp-14-faded-receipt     "Merchant and date survived, amount and card did not -> WEAK_EVIDENCE, capped at 0.6."
+send whatsapp whatsapp-15-new-driver        "Driver onboarded before any of her transactions posted -> NO_CANDIDATE_TRANSACTIONS."
+
 bold "Done. Open ${BASE_URL} for the overview and ${BASE_URL}/review for the queue."

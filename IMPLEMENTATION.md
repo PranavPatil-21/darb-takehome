@@ -273,10 +273,48 @@ protects nobody against a second browser tab.
 
 ---
 
+## 4a. The demo scenarios
+
+The unit tests prove the engine is right. They do not let anyone *see* it be right, and a
+reviewer reading this in twenty minutes should not have to run Jest to believe a claim.
+`npm run webhooks:demo` therefore fires nineteen payloads through the real webhooks against
+a real database, and between them they reach **every one of the nine reason codes
+`matchDocument` can return**:
+
+| Reason code | Demonstrated by |
+|---|---|
+| `CONFIDENT_SINGLE_CANDIDATE` | `whatsapp-01-exact-match` — every signal agrees |
+| `AMBIGUOUS_TOP_CANDIDATES` | `whatsapp-02-ambiguous` — two transactions tie exactly |
+| `MID_CONFIDENCE` | `whatsapp-03-tip-mismatch` — plausible, short of the bar |
+| `NO_PLAUSIBLE_CANDIDATE` | `whatsapp-04-orphan`, and each of the three veto scenarios |
+| `UNUSABLE_EXTRACTION` | `whatsapp-05-garbage` — OCR returned noise |
+| `LOW_EXTRACTION_CONFIDENCE` | `email-02-low-confidence` — signals agree, the read does not |
+| `TRANSACTION_ALREADY_DOCUMENTED` | `whatsapp-13-second-receipt` — a second claim on taken money |
+| `WEAK_EVIDENCE` | `whatsapp-14-faded-receipt` — merchant and date only |
+| `NO_CANDIDATE_TRANSACTIONS` | `whatsapp-15-new-driver` — nothing in scope yet |
+
+The last eight scenarios were added on an **isolated driver** (card `5520`, plus one driver
+with no transactions at all). That isolation is deliberate and load-bearing: the demo script
+fires sequentially against live state, so a new seed transaction landing near an existing
+fixture's merchant, card and date would quietly become a second candidate for it and turn a
+documented `AUTO_MATCHED` into `NEEDS_REVIEW`. Scoping every new scenario to a card nothing
+else touches makes that class of interference impossible rather than merely unlikely. The
+demo output was captured before the additions and diffed after; all twelve pre-existing
+lines are byte-identical.
+
+`__tests__/fixtures.test.ts` guards the three ways this catalogue fails *silently* rather
+than loudly — two fixtures sharing bytes (the second is rejected as a duplicate and proves
+nothing), a media id pointing at a slug that no longer exists, a fixture missing from the
+hash map (extracts to `UNKNOWN`). In each case the script still prints a `200` while the
+scenario quietly stops demonstrating what its annotation claims. This project has already
+paid for the first of those once.
+
+---
+
 ## 5. Testing
 
-**172 tests across 8 suites.** Distribution follows the brief's instruction to put most
-effort into the matcher — 88 of the 172 tests exercise the matching engine alone.
+**176 tests across 9 suites.** Distribution follows the brief's instruction to put most
+effort into the matcher — 88 of the 176 tests exercise the matching engine alone.
 
 | Suite | Tests | Covers |
 |---|---|---|
@@ -288,6 +326,7 @@ effort into the matcher — 88 of the 172 tests exercise the matching engine alo
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
 | `rematch` | 9 | Late-arriving transactions, sweep scope, no OCR replay |
+| `fixtures` | 4 | The demo catalogue's own invariants — distinct bytes, resolvable media ids |
 
 Three deliberate choices:
 

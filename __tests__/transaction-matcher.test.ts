@@ -53,6 +53,19 @@ describe('edge case 1: exact match', () => {
     expect(result.candidates[0].confidence).toBeGreaterThanOrEqual(AUTO_MATCH_THRESHOLD);
   });
 
+  it('never stores a null in the breakdown — the contract is Record<string, number>', () => {
+    // The brief types `signals` as Record<string, number>. An unavailable signal is
+    // omitted from the object entirely; it is never present with a null or zero value.
+    const sparse = baseDocument({ cardLast4: null, documentDate: null });
+
+    const [candidate] = matchDocument(sparse, [baseTransaction()]).candidates;
+
+    for (const value of Object.values(candidate.signals)) {
+      expect(typeof value).toBe('number');
+    }
+    expect(Object.keys(candidate.signals).sort()).toEqual(['amount', 'merchant']);
+  });
+
   it('publishes a per-signal breakdown so the score is explainable', () => {
     const [candidate] = matchDocument(baseDocument(), [baseTransaction()]).candidates;
 
@@ -217,7 +230,7 @@ describe('edge case 6: unusable extraction', () => {
   it('survives a malformed document date instead of producing NaN scores', () => {
     const result = matchDocument(baseDocument({ documentDate: 'not-a-date' }), [baseTransaction()]);
 
-    expect(result.candidates[0]?.signals.date ?? null).toBeNull();
+    expect(result.candidates[0].signals.date).toBeUndefined();
     expect(Number.isFinite(result.candidates[0].confidence)).toBe(true);
   });
 
@@ -303,12 +316,12 @@ describe('sender scoping', () => {
 /* -------------------------------------------------------------------------- */
 
 describe('signal handling', () => {
-  it('treats a missing card number as absent, not as a mismatch', () => {
+  it('omits a missing card number from the breakdown rather than scoring it zero', () => {
     const withCard = matchDocument(baseDocument(), [baseTransaction()]).candidates[0];
     const withoutCard = matchDocument(baseDocument({ cardLast4: null }), [baseTransaction()])
       .candidates[0];
 
-    expect(withoutCard.signals.cardLast4).toBeNull();
+    expect('cardLast4' in withoutCard.signals).toBe(false);
     // Dropping a signal must not be punished as if it contradicted — the remaining
     // weights renormalise, so confidence stays high.
     expect(withoutCard.confidence).toBeGreaterThan(0.8);
@@ -334,7 +347,7 @@ describe('signal handling', () => {
   it('decays the date signal as the document drifts from the transaction', () => {
     const scoreAt = (iso: string) =>
       matchDocument(baseDocument({ documentDate: iso }), [baseTransaction()]).candidates[0]
-        ?.signals.date ?? null;
+        .signals.date as number;
 
     expect(scoreAt('2025-06-14T00:00:00Z')).toBe(1);
     expect(scoreAt('2025-06-13T00:00:00Z')).toBeLessThan(1);

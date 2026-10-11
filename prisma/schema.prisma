@@ -73,7 +73,9 @@ model Transaction {
   confirmedDocumentId Int?      @unique
   confirmedDocument   Document? @relation("ConfirmedDocument", fields: [confirmedDocumentId], references: [id])
 
-  matches DocumentMatch[]
+  /// Named `documents` to match the brief's schema. It holds DocumentMatch rows — the
+  /// candidate pairings for this transaction, not Document rows directly.
+  documents DocumentMatch[]
 
   @@index([clientId, transactionAt])
   @@index([driverPhone, transactionAt])

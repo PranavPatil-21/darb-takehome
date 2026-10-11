@@ -144,8 +144,7 @@ export default async function HomePage() {
                         {best ? (
                           <div className="text-[10px] text-muted-foreground">
                             {Object.entries(signals)
-                              .filter(([, score]) => score !== null)
-                              .map(([key, score]) => `${key[0]}${Math.round((score ?? 0) * 100)}`)
+                              .map(([key, score]) => `${key[0]}${Math.round(score * 100)}`)
                               .join(' · ')}
                           </div>
                         ) : null}

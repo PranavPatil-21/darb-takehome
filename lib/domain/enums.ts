@@ -63,11 +63,15 @@ export const CONFIRMED_MATCH_STATUSES: readonly MatchStatus[] = ['AUTO_CONFIRMED
 
 /**
  * Per-signal scores, stored on DocumentMatch so a reviewer can see *why* a candidate
- * scored what it did. `null` means "this signal was not available on this document"
- * (e.g. OCR found no card number) — distinct from a score of 0, which means
- * "available and contradictory".
+ * scored what it did. Matches the shape the brief specifies: `Record<string, number>`.
+ *
+ * A signal that was not available on this document (e.g. OCR found no card number) is
+ * **omitted from the record entirely** rather than stored as 0. That distinction is
+ * load-bearing: "the receipt shows no card number" and "the receipt shows a *different*
+ * card number" must never look alike, and a present-but-zero score means the latter.
+ * Callers test availability with `key in signals`.
  */
-export const signalBreakdownSchema = z.record(z.string(), z.number().nullable());
+export const signalBreakdownSchema = z.record(z.string(), z.number());
 export type SignalBreakdown = z.infer<typeof signalBreakdownSchema>;
 
 export function encodeSignals(signals: SignalBreakdown): string {

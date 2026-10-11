@@ -80,7 +80,12 @@ export interface MatchCandidate {
   transactionId: number;
   /** 0..1 — weighted blend of the signals below. */
   confidence: number;
-  /** Per-signal scores. `null` means "signal unavailable", not "signal scored zero". */
+  /**
+   * Per-signal scores, `Record<string, number>` as the brief specifies.
+   *
+   * A signal that could not be read is **absent from this object**, not present as 0 —
+   * see `signalBreakdownSchema`. Test availability with `'cardLast4' in signals`.
+   */
   signals: SignalBreakdown;
 }
 
@@ -243,7 +248,7 @@ function combine(signals: SignalBreakdown): number {
 
   for (const [name, weight] of Object.entries(SIGNAL_WEIGHTS) as [SignalName, number][]) {
     const score = signals[name];
-    if (score === null || score === undefined) continue;
+    if (score === undefined) continue; // signal unavailable — excluded, not zeroed
     weighted += score * weight;
     totalWeight += weight;
   }
@@ -269,7 +274,15 @@ function scoreTransaction(
   if (date === 0) return null;
   if (cardLast4 === 0) return null;
 
-  const signals: SignalBreakdown = { amount, cardLast4, merchant, date };
+  // Absent signals are omitted rather than set to null, so the stored breakdown matches
+  // the `Record<string, number>` contract and "unavailable" stays distinguishable from
+  // "scored zero".
+  const signals: SignalBreakdown = {};
+  if (amount !== null) signals.amount = amount;
+  if (cardLast4 !== null) signals.cardLast4 = cardLast4;
+  if (merchant !== null) signals.merchant = merchant;
+  if (date !== null) signals.date = date;
+
   let confidence = combine(signals);
 
   // Merchant and date alone are not enough to attach a document to money. A fleet

@@ -142,6 +142,21 @@ model DocumentMatch {
   decidedAt     DateTime?
   createdAt     DateTime    @default(now())
 
+  /// --- Maker-checker ------------------------------------------------------------
+  /// All three are nullable and default to the inert value, so a deployment with the
+  /// control switched off behaves exactly as it did before these columns existed.
+
+  /// Whether this attachment was selected for independent sign-off. Decided once, when
+  /// the attachment is made, rather than evaluated at read time: a sampling rule that is
+  /// re-rolled on every page load would let a reviewer refresh until the work disappears,
+  /// and a materiality threshold that changed later would silently rewrite history.
+  verificationRequired Boolean   @default(false)
+  /// Who signed it off. Must differ from `decidedBy` — that difference is the control.
+  verifiedBy           String?
+  verifiedAt           DateTime?
+  /// UPHELD | OVERTURNED. Null while it is still waiting.
+  verificationOutcome  String?
+
   @@unique([documentId, transactionId])
   @@index([documentId, confidence])
   @@index([transactionId])

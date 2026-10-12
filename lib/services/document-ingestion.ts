@@ -3,6 +3,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import prismaDefault from '@/lib/prisma';
 import { log } from '@/lib/logger';
 import { recordEvent } from '@/lib/platform/audit';
+import { decideVerification } from '@/lib/platform/verification';
 import { getExtractor } from '@/lib/extraction';
 import { encodeSignals, type DocumentSource, type DocumentStatus } from '@/lib/domain/enums';
 import { selectCandidateTransactions } from '@/lib/services/candidate-selection';
@@ -339,16 +340,36 @@ export async function persistMatchResult(
   const autoMatch = match.outcome === 'AUTO_MATCHED' && !humanRejected.has(match.candidates[0].transactionId);
   const winner = writable[0];
 
+  // Amounts for the candidates, read once outside the write transaction: the
+  // verification decision needs the charge value, and a per-candidate lookup inside the
+  // loop would be an N+1 on the hottest path in the pipeline.
+  const chargeRows = await prisma.transaction.findMany({
+    where: { id: { in: match.candidates.map((c) => c.transactionId) } },
+    select: { id: true, amount: true },
+  });
+  const chargeAmounts = new Map(chargeRows.map((row) => [row.id, row.amount]));
+
   try {
     return await prisma.$transaction(async (tx) => {
       for (const candidate of writable) {
         const isWinner = autoMatch && candidate.transactionId === winner.transactionId;
+        // An automatic attachment is the one category no human has looked at. Whether it
+        // needs an independent read is decided here, at the moment it is made, for the
+        // same reason a human confirmation's is.
+        const verification = isWinner
+          ? decideVerification({
+              amount: chargeAmounts.get(candidate.transactionId) ?? 0,
+              automatic: true,
+              draw: Math.random(),
+            })
+          : null;
         const data = {
           confidence: candidate.confidence,
           signals: encodeSignals(candidate.signals),
           status: isWinner ? 'AUTO_CONFIRMED' : 'CANDIDATE',
           decidedBy: isWinner ? 'system' : null,
           decidedAt: isWinner ? new Date() : null,
+          verificationRequired: verification?.required ?? false,
         };
 
         await tx.documentMatch.upsert({

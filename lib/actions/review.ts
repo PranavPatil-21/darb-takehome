@@ -9,6 +9,7 @@ import { actionClient } from '@/lib/actions/safe-action-client';
 import { CONFIRMED_MATCH_STATUSES, TERMINAL_MATCH_STATUSES, type MatchStatus } from '@/lib/domain/enums';
 import { can, resolveActor } from '@/lib/platform/identity';
 import { recordEvent } from '@/lib/platform/audit';
+import { decideVerification } from '@/lib/platform/verification';
 import {
   TransactionAlreadyDocumentedError,
   claimConfirmedDocumentSlot,
@@ -96,9 +97,29 @@ export const confirmMatch = actionClient
         );
         if (!claimed) throw new TransactionAlreadyDocumentedError(match.transactionId);
 
+        const charge = await tx.transaction.findUnique({
+          where: { id: match.transactionId },
+          select: { amount: true },
+        });
+
+        // Decided once, here, rather than evaluated when the assurance queue is read: a
+        // sampling rule re-rolled on every page load would let a reviewer refresh until
+        // the work disappeared, and a materiality threshold changed later would silently
+        // rewrite which past attachments were ever supposed to be checked.
+        const verification = decideVerification({
+          amount: charge?.amount ?? 0,
+          automatic: false,
+          draw: Math.random(),
+        });
+
         await tx.documentMatch.update({
           where: { id: matchId },
-          data: { status: 'CONFIRMED', decidedBy: actor.id, decidedAt: new Date() },
+          data: {
+            status: 'CONFIRMED',
+            decidedBy: actor.id,
+            decidedAt: new Date(),
+            verificationRequired: verification.required,
+          },
         });
 
         // Confirming one candidate rules out its siblings on the same document: a

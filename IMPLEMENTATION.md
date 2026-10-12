@@ -354,20 +354,108 @@ paid for the first of those once.
 
 ---
 
+## 4b. The interface
+
+The brief asks for a minimal `/review` page as a bonus, and scores the engine rather than
+the screen. Two screens exist anyway, because a matching product that cannot explain
+itself to the person overruling it is only half-built — and because the explainability the
+brief *does* weight at 30% only pays off if a human can read it.
+
+### The decision is a comparison, not a score
+
+The engine's output is four numbers. A number is a summary of a comparison, and the review
+queue originally showed the summary: four coloured bars, a percentage, and the document's
+own fields in a separate line of prose above them. The reader performed the diff in their
+head, on the one screen where a mistake attaches a receipt to the wrong charge.
+
+Each candidate now shows the two sides on one baseline, field by field, with a sentence
+where the values alone do not explain themselves — a tip is named as a tip, an undercharge
+is explicitly *not* explained away, a card mismatch says the receipt belongs to another
+charge. `lib/ui/comparison.ts` is pure and tested, and it deliberately does not re-score
+anything: `signals` on the match row stays the authority on confidence, and these rows
+explain why that number came out as it did. Two code paths computing a verdict is how a
+diagnostic ends up quietly disagreeing with the engine.
+
+The per-signal scores are not deleted. They move into a collapsed *How the engine scored
+this* — a matching product that cannot show its working is asking for trust it has not
+earned, and the numeric confidence stays on every candidate because the brief asks for
+ranked candidates.
+
+### The hardest case gets less interface, not more
+
+When two charges tie on every signal, every bar reads 100% for both. The interface has
+nothing left to say with scores, and saying it louder would be worse: the engine routed
+the document to review *because* it could not choose, so a "best" badge on one of them is
+the UI placing a bet with someone's money.
+
+So on `AMBIGUOUS_TOP_CANDIDATES` the rank numerals disappear and a callout names only the
+fields that differ *between the two charges* — for the seed's Tamimi pair, the branch and
+the time of day — and points at the paper receipt. `distinguishingFields()` returns an
+empty list when nothing separates them at all, and the UI says so and suggests rejecting
+both. An interface that presents a coin flip as a choice is how a wrong attachment gets
+made and then looks reviewed.
+
+### Things that were on screen and should not have been
+
+`a100 · c100 · m88 · d100` under every confidence figure was a debug print of a
+`Record<string, number>`. The eight-column table of every document, sorted by database id,
+was built for whoever was debugging the matcher. `Documents ingested` and `Transactions
+seeded` go up whether or not anything is wrong. Six `DocumentStatus` values became four
+words — `RECEIVED` and `EXTRACTED` are moments inside one request nobody observes in a
+list, while `UNMATCHED` and `FAILED` stay distinct because they route to different people.
+Document and transaction ids are not identifiers to a reader; merchant, amount, day and
+card are.
+
+Two fields were stored and shown nowhere. `rawText` is on every document, so a reviewer
+was being asked to judge a receipt they could not see; it is now rendered with `dir="auto"`
+because KSA receipts are routinely bilingual. `vatNumber` is the field that decides whether
+a document is usable for a filing at all.
+
+### What the front page answers
+
+It opened with a count of documents. It now opens with the operator's question — how much
+of the period's card spend has no receipt behind it — because that is what an auditor asks.
+`vatWithin()` extracts VAT with **15/115**, not 15/100: transaction amounts are what the
+card was charged, so the tax is already inside the number, and the naive form overstates
+the position by SAR 56 on the seed data. The period is derived from `max(transactionAt)`
+rather than the clock, so the page does not read 0% covered to anyone running this after
+June 2025.
+
+It stops there. There is no filing-date field in the schema, so there is no deadline and no
+countdown — and the VAT line describes the document ("No VAT number on this document")
+rather than asserting anything about what is recoverable, which is a question for the
+operator's accountant.
+
+### What it cost
+
+No new runtime dependencies, no charts, no client-side state. Everything is a Server
+Component except `MatchActions`, which was already the only client component. The focused
+document lives in `?doc=`, so the queue survives a confirm without client state, a
+half-finished review can be handed over as a link, and the back button behaves.
+
+Every decision still goes through the existing `confirmMatch` / `rejectMatch` server
+actions and the compare-and-set slot claim in § 4. No new write path, no new server action,
+no API route for review — verified by exercising both actions over HTTP against the
+rebuilt UI.
+
+---
+
 ## 5. Testing
 
-**195 tests across 9 suites.** Distribution follows the brief's instruction to put most
-effort into the matcher — 98 of the 195 tests exercise the matching engine alone.
+**233 tests across 11 suites.** Distribution follows the brief's instruction to put most
+effort into the matcher — 98 of the 233 tests exercise the matching engine alone.
 
 | Suite | Tests | Covers |
 |---|---|---|
 | `transaction-matcher` | 33 | All six brief edge cases, vetoes, purity, determinism |
 | `matcher-edge-cases` | 65 | Every threshold probed on both sides of its edge |
+| `comparison` | 26 | The document-vs-charge diff a reviewer decides from |
 | `webhooks` | 21 | 400 on malformed, never 500, HMAC, production fails closed |
 | `document-ingestion` | 19 | Idempotency incl. concurrent, failure isolation, scoping |
 | `merchant` | 18 | Normalisation and similarity on real acquirer strings |
 | `rematch` | 12 | Late arrivals, rejections are permanent, late sender registration |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
+| `coverage` | 12 | Receipt coverage and the 15/115 VAT extraction |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
 | `fixtures` | 4 | The demo catalogue's own invariants |
 

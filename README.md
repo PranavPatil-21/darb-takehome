@@ -86,7 +86,7 @@ Client, including the malformed payloads that return `400`.
 ## Tests
 
 ```bash
-npm test           # 195 tests, 9 suites
+npm test           # 233 tests, 11 suites
 npm run typecheck  # tsc --noEmit, strict
 npm run build      # production build
 ```
@@ -97,11 +97,13 @@ Integration tests create their own throwaway `prisma/test.db`; they do not touch
 |---|---|---|
 | `transaction-matcher` | 33 | All six brief edge cases, vetoes, purity, determinism |
 | `matcher-edge-cases` | 65 | Every threshold probed on both sides of its edge |
+| `comparison` | 26 | The document-vs-charge diff a reviewer decides from |
 | `webhooks` | 21 | 400 on malformed, never 500, HMAC, production fails closed |
 | `document-ingestion` | 19 | Idempotency incl. concurrent, failure isolation, scoping |
 | `merchant` | 18 | Normalisation and similarity on real acquirer strings |
 | `rematch` | 12 | Late arrivals, rejections are permanent, late sender registration |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
+| `coverage` | 12 | Receipt coverage and the 15/115 VAT extraction |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
 | `fixtures` | 4 | The demo catalogue's own invariants |
 
@@ -114,8 +116,8 @@ app/
   api/webhooks/email/route.ts       inbound email webhook
   api/webhooks/whatsapp/route.ts    inbound WhatsApp webhook
   api/transactions/route.ts         transaction ingestion — triggers re-matching
-  review/page.tsx                   review queue
-  page.tsx                          pipeline overview
+  review/page.tsx                   review queue — the decision screen
+  page.tsx                          overview — receipt coverage in riyals
 lib/
   domain/enums.ts                   union types + Zod at the persistence boundary
   extraction/                       DocumentExtractor interface + MockExtractor
@@ -131,6 +133,14 @@ lib/
     rematch.ts                      re-match sweep for late transactions
   actions/review.ts                 confirm / reject server actions
   webhooks/                         Zod schemas, HMAC, response helpers
+  ui/
+    comparison.ts                   document-vs-charge diff, pure and tested
+    coverage.ts                     receipt coverage + VAT at risk (15/115)
+    vocabulary.ts                   six pipeline states → four words a reader uses
+components/
+  review/                           the decision: comparison, candidates, actions
+  home/                             coverage headline, worklists
+  chrome/, documents/               nav and the one place status becomes colour
 prisma/schema.prisma, seed.ts       2 clients · 8 senders · 22 transactions
 fixtures/                           18 documents + their webhook payloads
 ```

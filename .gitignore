@@ -49,3 +49,6 @@ prisma/dev.db-journal
 !.env.example
 prisma/test.db
 prisma/test.db-journal
+
+# Production build output, kept separate from the dev server's .next
+/.next-build/

@@ -165,7 +165,22 @@ take-home restraint and produced something coherent but thin. That was the wrong
 
 ---
 
-## 6. What breaks first
+## 6. Build output is separate from the dev server
+
+`next dev` and `next build` both write to `.next` by default, and they write incompatible
+things into it. Running a build while a dev server is up leaves that server serving a
+half-overwritten client manifest, and every affected route then fails with
+`Could not find the module … in the React Client Manifest` — an error naming the React
+Server Components bundler and saying nothing about the cause.
+
+It is not theoretical: it happened three times during development, and it would happen to
+anybody who opens a second terminal to check the project compiles. `next.config.ts` reads
+`distDir` from `NEXT_DIST_DIR`, and `npm run build` / `npm run start` set it to
+`.next-build`. The two no longer share an output directory, so both can run at once.
+
+---
+
+## 7. What breaks first
 
 Honest list, in the order it would bite.
 
@@ -184,7 +199,7 @@ contract.
 
 ---
 
-## 7. Testing strategy
+## 8. Testing strategy
 
 285 tests, 16 suites, and the split is deliberate.
 

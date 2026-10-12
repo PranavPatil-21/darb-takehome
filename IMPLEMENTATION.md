@@ -442,7 +442,7 @@ rebuilt UI.
 
 ## 5. Testing
 
-**285 tests across 16 suites.** Distribution follows the brief's instruction to put most
+**287 tests across 16 suites.** Distribution follows the brief's instruction to put most
 effort into the matcher — 98 of the 285 tests exercise the matching engine alone.
 
 | Suite | Tests | Covers |

@@ -86,7 +86,7 @@ Client, including the malformed payloads that return `400`.
 ## Tests
 
 ```bash
-npm test           # 285 tests, 16 suites
+npm test           # 287 tests, 16 suites
 npm run typecheck  # tsc --noEmit, strict
 npm run build      # production build
 ```

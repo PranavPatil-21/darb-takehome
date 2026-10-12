@@ -62,16 +62,20 @@ export function normaliseMerchant(raw: string | null | undefined): string[] {
 
   if (!cleaned) return [];
 
-  return cleaned
+  const tokens = cleaned
     .split(/\s+/)
     .map((token) => token.replace(/^0+(?=\d)/, '')) // "04" -> "4" before the digit test
-    .filter((token) => {
-      if (!token) return false;
-      if (/^\d+$/.test(token)) return false; // bare branch / terminal numbers
-      if (NOISE_TOKENS.has(token)) return false;
-      if (token.length === 1) return false; // stray initials left by punctuation splits
-      return true;
-    });
+    .filter((token) => token.length > 0 && !/^\d+$/.test(token) && !NOISE_TOKENS.has(token));
+
+  // Single characters are usually debris from the punctuation split above ("ST. 04" ->
+  // "ST 04"), so they are dropped — but only while something identifying survives.
+  // "H&M" and "A&W" are entirely single characters once split, and discarding them
+  // leaves an empty token list, which `merchantSimilarity` reads as a score of 0: two
+  // identical, fully identifying names scoring as a contradiction, spending the whole
+  // merchant weight arguing that "H&M" is not "H&M". Keeping the tokens when they are
+  // all there is preserves the filter's intent and the invariant sim(x, x) = 1.
+  const withoutInitials = tokens.filter((token) => token.length > 1);
+  return withoutInitials.length > 0 ? withoutInitials : tokens;
 }
 
 /** Character bigrams of a string, used for the Dice coefficient. */

@@ -130,15 +130,58 @@ describe('sweep scope', () => {
     expect(document.status).toBe('NEEDS_REVIEW');
   });
 
-  it('skips documents that could never be scoped to a client', async () => {
-    await ingestDocument(
+  it('leaves a document whose sender is still unregistered exactly as it was', async () => {
+    const { documentId } = await ingestDocument(
       { ...orphan, externalId: 'wamid.STRANGER', senderIdentifier: '966500000000' },
       testPrisma,
     );
 
     const outcomes = await rematchUnmatchedDocuments({}, testPrisma);
 
-    expect(outcomes).toEqual([]);
+    // Examined and left alone, rather than excluded from the query. The distinction
+    // matters: the sweep is the only thing that can notice a sender has been registered
+    // since ingestion, so it has to look.
+    expect(outcomes).toEqual([
+      expect.objectContaining({ documentId, status: 'UNMATCHED', changed: false }),
+    ]);
+    const document = await testPrisma.document.findUniqueOrThrow({ where: { id: documentId } });
+    expect(document.clientId).toBeNull();
+  });
+
+  it('rescues a document once its sender is registered', async () => {
+    // The promise `document-ingestion.ts` makes when it parks an unknown sender in
+    // UNMATCHED rather than FAILED: registering the sender later resolves it without
+    // re-ingesting. That promise is only keepable because extraction happens before
+    // scoping — the bytes are gone once the webhook returns, so a document skipped at
+    // extraction time could never be recovered.
+    const { documentId } = await ingestDocument(
+      { ...orphan, externalId: 'wamid.LATEREG', senderIdentifier: '966500000000' },
+      testPrisma,
+    );
+
+    // The extraction must already be on the row, with no bytes available to redo it.
+    const beforeRegistration = await testPrisma.document.findUniqueOrThrow({
+      where: { id: documentId },
+    });
+    expect(beforeRegistration.merchantName).toBe('Kudu Restaurant');
+    expect(beforeRegistration.totalAmount).toBe(3300);
+
+    await testPrisma.senderIdentity.create({
+      data: {
+        identifier: '966500000000',
+        channel: 'WHATSAPP',
+        clientId: 1,
+        driverPhone: '966551234567',
+        label: 'Registered after the fact',
+      },
+    });
+    await testPrisma.transaction.create({ data: lateArrival });
+
+    await rematchUnmatchedDocuments({}, testPrisma);
+
+    const document = await testPrisma.document.findUniqueOrThrow({ where: { id: documentId } });
+    expect(document.clientId).toBe(1);
+    expect(document.status).toBe('MATCHED');
   });
 
   it('can be narrowed to one client', async () => {

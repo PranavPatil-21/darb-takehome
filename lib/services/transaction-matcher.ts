@@ -366,7 +366,16 @@ export function matchDocument(
     return review('TRANSACTION_ALREADY_DOCUMENTED');
   }
 
-  if (runnerUp && top.confidence - runnerUp.confidence < AMBIGUITY_MARGIN) {
+  // Rounded before comparing, not compared raw. Confidences are already quantised to four
+  // decimals by `combine`, but their IEEE-754 *difference* is not: 0.95 - 0.90 is
+  // 0.04999999999999993 while 0.90 - 0.85 is 0.050000000000000044, so two pairs with the
+  // identical nominal gap of exactly 0.05 would land on opposite sides of this threshold.
+  // The direction of the error is harmless — one extra review — but a documented rule
+  // that holds for some values and not others is not a rule, and it is the kind of thing
+  // that makes a confidence boundary impossible to reason about later.
+  const margin = Number((top.confidence - (runnerUp?.confidence ?? 0)).toFixed(4));
+
+  if (runnerUp && margin < AMBIGUITY_MARGIN) {
     // The lead is within noise. Two plausible transactions, no basis to pick one.
     return review('AMBIGUOUS_TOP_CANDIDATES');
   }

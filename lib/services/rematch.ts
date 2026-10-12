@@ -51,8 +51,35 @@ export async function rematchDocument(
   documentId: number,
   prisma: PrismaClient = prismaDefault,
 ): Promise<RematchOutcome | null> {
-  const document = await prisma.document.findUnique({ where: { id: documentId } });
+  let document = await prisma.document.findUnique({ where: { id: documentId } });
   if (!document) return null;
+
+  // A document ingested from an unrecognised sender carries no client, so nothing can be
+  // matched to it. That is not permanent: once the sender is registered, re-resolving the
+  // identity here is what turns a stranded document into a matchable one — which is the
+  // whole reason it was parked in UNMATCHED rather than FAILED.
+  if (document.clientId === null) {
+    const identity = await prisma.senderIdentity.findUnique({
+      where: { identifier: document.senderIdentifier },
+      select: { clientId: true, driverPhone: true },
+    });
+    if (!identity) {
+      return {
+        documentId,
+        previousStatus: document.status as DocumentStatus,
+        status: document.status as DocumentStatus,
+        changed: false,
+      };
+    }
+    document = await prisma.document.update({
+      where: { id: documentId },
+      data: { clientId: identity.clientId, driverPhone: identity.driverPhone },
+    });
+    log.info('Re-match: sender registered since ingestion; document now scoped', {
+      documentId,
+      clientId: identity.clientId,
+    });
+  }
 
   // A rejection is a decision about a *pairing*, and it is permanent. Without this the
   // sweep re-scores the transaction a reviewer already turned down and, finding it still
@@ -100,8 +127,13 @@ export async function rematchUnmatchedDocuments(
   const pending = await prisma.document.findMany({
     where: {
       status: 'UNMATCHED',
-      // A document we could not scope to a client cannot be matched by re-running.
-      clientId: options.clientId ?? { not: null },
+      OR: [
+        { clientId: options.clientId ?? { not: null } },
+        // Unscoped documents are included deliberately: a sender registered since
+        // ingestion makes one matchable, and `rematchDocument` re-resolves the identity
+        // and backfills the row. Excluding them here is what previously stranded them.
+        { clientId: null },
+      ],
     },
     select: { id: true },
     orderBy: { id: 'asc' },

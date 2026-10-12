@@ -18,6 +18,7 @@ import {
   VAT_ROUNDING_TOLERANCE_HALALAS,
   WEAK_EVIDENCE_CONFIDENCE_CAP,
 } from '@/lib/matching/scoring-config';
+import { candidateWindow } from '@/lib/services/candidate-selection';
 
 /**
  * Boundary and edge-case coverage for the matching engine.
@@ -579,5 +580,98 @@ describe('degenerate inputs', () => {
         result.candidates[i].confidence,
       );
     }
+  });
+});
+
+/* ========================================================================== */
+/* Boundaries found by review, pinned so they cannot silently return          */
+/* ========================================================================== */
+
+describe('a name made entirely of initials', () => {
+  it('is identical to itself — the normaliser must not empty it', () => {
+    // "H&M" splits to "H","M" on punctuation, and dropping single characters as split
+    // debris left nothing behind. An empty token list reads as a score of 0, so two
+    // identical fully-identifying names scored as a contradiction, spending the whole
+    // 0.20 merchant weight arguing that H&M is not H&M.
+    expect(scoreMerchant('H&M', 'H&M')).toBe(1);
+    expect(scoreMerchant('A&W', 'A&W')).toBe(1);
+    expect(scoreMerchant('H&M KSA', 'H&M')).toBeGreaterThan(0.8);
+  });
+
+  it('still discards split debris when something identifying survives', () => {
+    // The filter's original purpose. "ST" and the branch number must still go.
+    expect(scoreMerchant('ALFANAR FUEL ST 04 RUH', 'Alfanar Fuel Station')).toBeGreaterThan(0.8);
+  });
+
+  it('does not auto-match two genuinely different initialisms', () => {
+    expect(scoreMerchant('H&M', 'A&W')).toBeLessThan(0.5);
+  });
+});
+
+describe('the ambiguity margin is decided in decimal, not in binary floating point', () => {
+  it.each([
+    [1.0, 0.95],
+    [0.95, 0.9],
+    [0.9, 0.85],
+    [0.8775, 0.8275],
+  ])('treats a nominal gap of exactly 0.05 the same way at %f vs %f', (top, runnerUp) => {
+    // Compared raw, these disagree: 0.95 - 0.90 is 0.04999999999999993 while 0.90 - 0.85
+    // is 0.050000000000000044, so two pairs with the identical nominal gap land on
+    // opposite sides of the threshold. A documented rule that holds for some values and
+    // not others is not a rule. Confidences are already quantised to four decimals by
+    // `combine`, so the comparison is too.
+    const margin = Number((top - runnerUp).toFixed(4));
+
+    expect(margin).toBe(0.05);
+    // Exactly at the margin is not *below* it, so this pair auto-matches.
+    expect(margin < AMBIGUITY_MARGIN).toBe(false);
+  });
+
+  it('auto-matches the real pair whose raw subtraction falls short of the margin', () => {
+    // The arithmetic above, driven through the engine. These two candidates score 0.95
+    // and 0.90 — a nominal gap of exactly 0.05, which the documented rule puts on the
+    // auto-match side. Compared raw it is 0.04999999999999993, and the document goes to
+    // review instead. This is the pair that catches a regression; the table above only
+    // documents why.
+    const document = doc({ totalAmount: 12_800 });
+    const result = matchDocument(document, [
+      txn({ amount: 13_000 }), // amount 0.875 -> confidence 0.95
+      txn({ amount: 14_000 }), // amount 0.750 -> confidence 0.90
+    ]);
+
+    expect(result.candidates[0].confidence).toBe(0.95);
+    expect(result.candidates[1].confidence).toBe(0.9);
+    expect(result.outcome).toBe('AUTO_MATCHED');
+  });
+
+  it('still calls a gap a hair under the margin ambiguous', () => {
+    const document = doc({ totalAmount: 12_800 });
+    const result = matchDocument(document, [
+      txn({ amount: 13_000 }), // 0.95
+      txn({ amount: 13_800 }), // 0.91 -> gap 0.04
+    ]);
+
+    expect(result.outcome).toBe('NEEDS_REVIEW');
+    expect(result.reason).toBe('AMBIGUOUS_TOP_CANDIDATES');
+  });
+});
+
+describe('the candidate query is never narrower than the matcher', () => {
+  it('still scores a transaction late on the last allowed day', () => {
+    // `candidateWindow` bounds the SQL query; `scoreDate` decides the rule. A document
+    // dated at UTC midnight puts anchor + 7 days at midnight on day seven, while
+    // scoreDate still accepts a transaction at noon that day. If the query were the
+    // narrower of the two, that candidate would never reach the matcher at all — and a
+    // candidate that is never fetched cannot be vetoed, only silently lost.
+    const docDate = '2025-06-15T00:00:00.000Z';
+    const lateOnDaySeven = new Date('2025-06-22T12:00:00Z');
+
+    expect(scoreDate(docDate, lateOnDaySeven)).toBeGreaterThan(0);
+
+    const { from, to } = candidateWindow(
+      { ...doc({ documentDate: docDate }) },
+      new Date(docDate),
+    );
+    expect(lateOnDaySeven >= from && lateOnDaySeven <= to).toBe(true);
   });
 });

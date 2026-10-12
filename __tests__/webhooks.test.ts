@@ -1,7 +1,7 @@
 import { POST as emailPost } from '@/app/api/webhooks/email/route';
 import { POST as whatsappPost } from '@/app/api/webhooks/whatsapp/route';
 import { readFixtureFile } from '@/fixtures';
-import { computeSignature } from '@/lib/webhooks/signature';
+import { allowUnsignedWebhooks, computeSignature } from '@/lib/webhooks/signature';
 import { MockExtractor, setExtractor } from '@/lib/extraction';
 import { resetDatabase, seedMinimalWorld, testPrisma } from './helpers/db';
 
@@ -320,5 +320,40 @@ describe('signature verification', () => {
     );
 
     expect(response.status).toBe(401);
+  });
+});
+
+describe('unsigned-request policy', () => {
+  const original = { nodeEnv: process.env.NODE_ENV, allow: process.env.ALLOW_UNSIGNED_WEBHOOKS };
+
+  afterEach(() => {
+    // NODE_ENV is readonly in the Next types but writable at runtime; restore it so the
+    // rest of the suite is unaffected.
+    Object.defineProperty(process.env, 'NODE_ENV', { value: original.nodeEnv, configurable: true });
+    if (original.allow === undefined) delete process.env.ALLOW_UNSIGNED_WEBHOOKS;
+    else process.env.ALLOW_UNSIGNED_WEBHOOKS = original.allow;
+  });
+
+  it('refuses unsigned requests in production even when the flag says otherwise', () => {
+    // The failure this guards: a production deploy that forgets the variable. Defaulting
+    // to open there means accepting forged webhooks from anyone who knows the URL.
+    Object.defineProperty(process.env, 'NODE_ENV', { value: 'production', configurable: true });
+    process.env.ALLOW_UNSIGNED_WEBHOOKS = 'true';
+
+    expect(allowUnsignedWebhooks()).toBe(false);
+  });
+
+  it('allows unsigned requests outside production so the sample scripts run', () => {
+    Object.defineProperty(process.env, 'NODE_ENV', { value: 'development', configurable: true });
+    delete process.env.ALLOW_UNSIGNED_WEBHOOKS;
+
+    expect(allowUnsignedWebhooks()).toBe(true);
+  });
+
+  it('still honours an explicit opt-out outside production', () => {
+    Object.defineProperty(process.env, 'NODE_ENV', { value: 'development', configurable: true });
+    process.env.ALLOW_UNSIGNED_WEBHOOKS = 'false';
+
+    expect(allowUnsignedWebhooks()).toBe(false);
   });
 });

@@ -28,10 +28,22 @@ export function candidateWindow(doc: MatchableDocument, receivedAt: Date): { fro
     ? MAX_DATE_DRIFT_DAYS
     : UNDATED_DOCUMENT_WINDOW_DAYS;
 
+  // One day of slack on each side, deliberately.
+  //
+  // This window is an optimisation — it keeps the scored set small. The *rule* about how
+  // far a date may drift lives in `scoreDate`, which counts whole calendar days. The two
+  // use the same constant but not the same arithmetic: a document dated at UTC midnight
+  // puts `anchor + 7 days` at midnight on day seven, while `scoreDate` still accepts a
+  // transaction at noon that day. Without the slack the query would silently exclude a
+  // transaction the matcher would have scored, and a narrower query cannot be overruled
+  // by a correct matcher — the candidate simply never arrives. The query must therefore
+  // always be the wider of the two, and the veto inside the matcher stays the authority.
+  const radiusMs = (radiusDays + 1) * MS_PER_DAY;
+
   return {
-    from: new Date(anchor.getTime() - radiusDays * MS_PER_DAY),
+    from: new Date(anchor.getTime() - radiusMs),
     // Transactions can post after the receipt is printed, so the window is two-sided.
-    to: new Date(anchor.getTime() + radiusDays * MS_PER_DAY),
+    to: new Date(anchor.getTime() + radiusMs),
   };
 }
 

@@ -356,20 +356,20 @@ paid for the first of those once.
 
 ## 5. Testing
 
-**181 tests across 9 suites.** Distribution follows the brief's instruction to put most
-effort into the matcher — 88 of the 181 tests exercise the matching engine alone.
+**195 tests across 9 suites.** Distribution follows the brief's instruction to put most
+effort into the matcher — 98 of the 195 tests exercise the matching engine alone.
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `transaction-matcher` | 33 | All six edge cases, signal behaviour, veto rules, purity, determinism |
-| `matcher-edge-cases` | 55 | Every threshold probed on both sides of its boundary |
-| `merchant` | 18 | Normalisation and similarity against real acquirer strings |
-| `document-ingestion` | 19 | Idempotency (including concurrent), failure isolation, scoping |
-| `webhooks` | 18 | 400 on malformed, never 500, HMAC verification |
+| `transaction-matcher` | 33 | All six brief edge cases, vetoes, purity, determinism |
+| `matcher-edge-cases` | 65 | Every threshold probed on both sides of its edge |
+| `webhooks` | 21 | 400 on malformed, never 500, HMAC, production fails closed |
+| `document-ingestion` | 19 | Idempotency incl. concurrent, failure isolation, scoping |
+| `merchant` | 18 | Normalisation and similarity on real acquirer strings |
+| `rematch` | 12 | Late arrivals, rejections are permanent, late sender registration |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
-| `rematch` | 11 | Late-arriving transactions, sweep scope, no OCR replay, rejections are permanent |
-| `fixtures` | 4 | The demo catalogue's own invariants — distinct bytes, resolvable media ids |
+| `fixtures` | 4 | The demo catalogue's own invariants |
 
 Three deliberate choices:
 
@@ -664,9 +664,13 @@ requirement, so it is a conversation, not a unilateral decision.
 - WhatsApp numbers are E.164 without a leading `+`; emails are lowercased. Both are
   normalised at ingestion (`normaliseSenderIdentifier`).
 - Every amount everywhere is integer minor units. Money is never a float in this codebase.
-- A document from an unregistered sender is stored but left `UNMATCHED` rather than
-  `FAILED`, so registering the sender later and running the sweep resolves it without
-  re-ingestion.
+- A document from an unregistered sender is stored **and extracted**, then left
+  `UNMATCHED` rather than `FAILED`, so registering the sender later and running the sweep
+  resolves it without re-ingestion. Extraction deliberately happens *before* scoping: OCR
+  needs bytes, not a client, and the bytes exist only for the lifetime of the webhook
+  request. Skipping extraction for an unknown sender would have stranded the document
+  permanently — the promise in the sentence above is only keepable because the extraction
+  is already on the row by the time anyone registers the sender.
 - The re-match sweep touches only `UNMATCHED` documents. `NEEDS_REVIEW` documents belong
   to a human and must not be reshuffled underneath them; `MATCHED` documents are settled.
 - **A rejection is permanent, and it is about a pairing rather than a document.** This
@@ -690,7 +694,10 @@ requirement, so it is a conversation, not a unilateral decision.
   `receipts+rawabi@darb.example.com`), which is unambiguous and costs nothing. I kept the
   sender-address mapping so the brief's payload works unmodified; the fleet-manager
   identity (`fleetops@rawabi-logistics.example`) is the shape that actually scales.
-- Signature verification allows unsigned requests in development
-  (`ALLOW_UNSIGNED_WEBHOOKS=true`) so the sample scripts run without signing. A signature
-  that is **present but wrong** is always rejected regardless — permissiveness never
+- Signature verification allows unsigned requests outside production
+  (`ALLOW_UNSIGNED_WEBHOOKS`, default permissive) so the sample scripts run without
+  signing. **In production the flag is ignored and unsigned requests are always refused** —
+  a security default has to fail closed, or a deploy that merely forgets the variable
+  accepts forged webhooks from anyone who knows the URL, silently. A signature that is
+  *present but wrong* is rejected in every environment regardless; permissiveness never
   extends to accepting a forgery.

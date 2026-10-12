@@ -53,6 +53,20 @@ export function verifySignature(options: {
     : { valid: false, reason: 'BAD_SIGNATURE' };
 }
 
+/**
+ * Whether a request carrying no signature header at all may be accepted.
+ *
+ * Permissive by default so the sample scripts and tests run unsigned — but **only outside
+ * production**. The previous form (`!== 'false'`) defaulted to open everywhere, so a
+ * production deploy that simply forgot the variable would accept forged webhooks from
+ * anyone who knew the URL, and would do it silently. A security default has to fail
+ * closed: in production the variable is ignored entirely, and the only way to accept an
+ * unsigned request is not to be in production.
+ *
+ * A signature that is *present but wrong* is rejected in every environment regardless —
+ * permissiveness never extends to accepting a forgery.
+ */
 export function allowUnsignedWebhooks(): boolean {
+  if (process.env.NODE_ENV === 'production') return false;
   return process.env.ALLOW_UNSIGNED_WEBHOOKS !== 'false';
 }

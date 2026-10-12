@@ -52,7 +52,7 @@ It then posts the Kudu receipt's late-arriving transaction to `POST /api/transac
 which rescues that document automatically:
 
 ```json
-{"created":[23],"rematch":{"scanned":2,"changed":1,
+{"created":[23],"rematch":{"scanned":3,"changed":1,
  "documents":[{"documentId":4,"from":"UNMATCHED","to":"MATCHED"}]}}
 ```
 
@@ -82,7 +82,7 @@ Client, including the malformed payloads that return `400`.
 ## Tests
 
 ```bash
-npm test           # 181 tests, 9 suites
+npm test           # 195 tests, 9 suites
 npm run typecheck  # tsc --noEmit, strict
 npm run build      # production build
 ```
@@ -92,12 +92,14 @@ Integration tests create their own throwaway `prisma/test.db`; they do not touch
 | Suite | Tests | Covers |
 |---|---|---|
 | `transaction-matcher` | 33 | All six brief edge cases, vetoes, purity, determinism |
-| `merchant` | 18 | Normalisation and similarity on real acquirer strings |
+| `matcher-edge-cases` | 65 | Every threshold probed on both sides of its edge |
+| `webhooks` | 21 | 400 on malformed, never 500, HMAC, production fails closed |
 | `document-ingestion` | 19 | Idempotency incl. concurrent, failure isolation, scoping |
-| `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |
+| `merchant` | 18 | Normalisation and similarity on real acquirer strings |
+| `rematch` | 12 | Late arrivals, rejections are permanent, late sender registration |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
-| `rematch` | 9 | Late-arriving transactions, sweep scope, no OCR replay |
+| `fixtures` | 4 | The demo catalogue's own invariants |
 
 ---
 

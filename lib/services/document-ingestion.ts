@@ -173,19 +173,17 @@ export async function ingestDocument(
   });
 
   if (!identity) {
-    // We hold the file for compliance, but we cannot scope it to a client, so it cannot
-    // be matched. UNMATCHED rather than FAILED: registering the sender later and
-    // re-running the sweep resolves it without re-ingesting.
-    const detail = `No sender identity registered for ${senderIdentifier}`;
-    await prisma.document.update({
-      where: { id: document.id },
-      data: { status: 'UNMATCHED', failureReason: detail },
-    });
     log.warn('Ingestion: unknown sender', { documentId: document.id, senderIdentifier });
-    return { disposition: 'INGESTED', documentId: document.id, status: 'UNMATCHED', detail };
   }
 
-  /* -- 4..6. Extract, match, persist — nothing past here may throw ------- */
+  /* -- 4..6. Extract, match, persist — nothing past here may throw -------
+   *
+   * An unknown sender does NOT short-circuit this. Extraction needs bytes, not a client,
+   * and the bytes exist only for the lifetime of this request — so skipping it here
+   * would strand the document permanently: registering the sender later could never
+   * recover an extraction nobody performed. Extract now, scope later. `processDocument`
+   * stops at UNMATCHED when there is no client to match within.
+   */
 
   return processDocument(document.id, input.bytes, input.mimeType, prisma);
 }
@@ -231,6 +229,19 @@ export async function processDocument(
       documentType: extracted.documentType,
       extractionConfidence: extracted.extractionConfidence,
     });
+
+    if (document.clientId === null) {
+      // Held for compliance and now fully extracted, but with no client it cannot be
+      // scoped and therefore cannot be matched. UNMATCHED rather than FAILED: nothing is
+      // wrong with the document, and registering the sender later makes the stored
+      // extraction matchable by the sweep with no re-ingestion.
+      const detail = `No sender identity registered for ${document.senderIdentifier}`;
+      await prisma.document.update({
+        where: { id: documentId },
+        data: { status: 'UNMATCHED', failureReason: detail },
+      });
+      return { disposition: 'INGESTED', documentId, status: 'UNMATCHED', detail };
+    }
 
     const matchable: MatchableDocument = {
       source: document.source as DocumentSource,

@@ -356,8 +356,8 @@ paid for the first of those once.
 
 ## 5. Testing
 
-**179 tests across 9 suites.** Distribution follows the brief's instruction to put most
-effort into the matcher — 88 of the 179 tests exercise the matching engine alone.
+**181 tests across 9 suites.** Distribution follows the brief's instruction to put most
+effort into the matcher — 88 of the 181 tests exercise the matching engine alone.
 
 | Suite | Tests | Covers |
 |---|---|---|
@@ -368,7 +368,7 @@ effort into the matcher — 88 of the 179 tests exercise the matching engine alo
 | `webhooks` | 18 | 400 on malformed, never 500, HMAC verification |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
-| `rematch` | 9 | Late-arriving transactions, sweep scope, no OCR replay |
+| `rematch` | 11 | Late-arriving transactions, sweep scope, no OCR replay, rejections are permanent |
 | `fixtures` | 4 | The demo catalogue's own invariants — distinct bytes, resolvable media ids |
 
 Three deliberate choices:
@@ -456,6 +456,101 @@ without demonstrating anything the interface does not already demonstrate.
 
 ## 7. What I would do next
 
+What follows is the gap between a take-home and something a fleet would actually run.
+Nothing here is required by the brief; it is what I would build next, in the order I would
+build it, because that ordering is itself a judgement worth stating.
+
+### 7.1 Authentication — there is no "who" in this system yet
+
+Every decision this codebase records is attributed to the string `'reviewer'`, hardcoded in
+`lib/actions/review.ts`. That is honest for an exercise with no login, and indefensible for
+a VAT-compliance product: `decidedBy` exists precisely so an auditor can ask *who attached
+this receipt to this charge*, and right now the answer is always the same fiction.
+
+I would add session-based auth before any other production work, because everything in 7.2
+depends on there being a caller to reason about.
+
+- **Shape:** Auth.js (NextAuth) with an email/OIDC provider, a `User` model, and a
+  `Session` carrying `userId` and `clientId`. Fleet operators are an organisational
+  customer, so SSO against their IdP matters more than a password form.
+- **The one change that matters most:** `REVIEWER` stops being a constant and becomes
+  `session.user.id`. `decidedBy` becomes a real foreign key to `User`, and the audit trail
+  becomes worth the column it occupies.
+- **Drivers do not log in.** They send a WhatsApp photo. Their identity is the phone number,
+  already modelled as `SenderIdentity` — which is why that model is the right seam: it is
+  an identity table for people who will never have a password.
+
+### 7.2 Authorization — the scoping rule is enforced once, in the wrong half of the system
+
+This is the more interesting half, and it is where I would expect a production incident if
+it were skipped.
+
+`selectCandidateTransactions` scopes documents to a client, and `scopeVeto` enforces it
+again inside the matcher. Both protect the *matching* path. **Neither protects the read
+path.** `/review`, `/` and the server actions query by document id with no notion of who is
+asking — so in a multi-tenant deployment, any authenticated user could read, confirm or
+reject another fleet's documents by guessing an integer. The data model already knows which
+client owns every row; the application simply never asks.
+
+The fix is not a permission check sprinkled at call sites — that is the pattern that leaks,
+because the leak is always the one call site nobody remembered.
+
+- **Carry the tenant in the query, not in an `if`.** Every read becomes
+  `where: { clientId: session.clientId, ... }`. A missing scope then returns *nothing*
+  rather than someone else's data — the failure mode is a blank screen, not a breach.
+  Prisma client extensions can apply this automatically so a new query cannot forget.
+- **Re-check on write.** `confirmMatch(matchId)` must load the match, assert its document's
+  `clientId` matches the session, and refuse otherwise — the same compare-and-set
+  transaction from § 4, with ownership as an additional predicate in the `WHERE`. Enforced
+  at the data layer, for the same reason the one-document rule is.
+- **Roles, because "can see the fleet" is not "can decide for the fleet":**
+
+  | Role | Can |
+  |---|---|
+  | Driver | Submit documents (via WhatsApp; no portal access) |
+  | Fleet manager | View own client's documents and transactions; confirm/reject |
+  | Finance / auditor | Read everything for the client, including the decision history; confirm nothing |
+  | Darb operator | Cross-tenant read for support, every access written to an audit log |
+
+  The split that matters is auditor-versus-manager: the person checking the books must not
+  be able to alter them.
+- **Test it like a rule, not a feature.** One test per role per action asserting the
+  *denied* case. Authorization bugs are invisible in happy-path tests by construction.
+
+### 7.3 Real OCR behind the existing interface
+
+The extractor already sits behind `DocumentExtractor`, and `lib/extraction/index.ts` has a
+one-line swap point, so this is deliberately a small change — the architecture was chosen to
+make it small.
+
+```ts
+export class VisionExtractor implements DocumentExtractor {
+  async extract(file: Buffer, mimeType: string): Promise<ExtractedDocument> { ... }
+}
+```
+
+What actually needs care is not the API call:
+
+- **`extractionConfidence` must mean something.** The matcher already gates auto-attach on
+  it (`MIN_EXTRACTION_CONFIDENCE_FOR_AUTO`), so a provider that returns a flat `0.99` for
+  everything silently disables that safety rail. A model that does not self-report usefully
+  needs a derived score — field-presence, checksum of the VAT number, whether the line items
+  sum to the stated total.
+- **The mock stays the default.** Reviewers and CI must run with no keys, which is also why
+  the fixtures are hash-keyed and deterministic.
+- **Validate the model's output, do not trust it.** A vision model will happily return
+  `totalAmount: 12500` for a blurry 125.00 *or* 1250.00. The extraction should pass through
+  a Zod schema at that boundary like any other untrusted input, and disagreement between the
+  parsed total and the summed line items should lower confidence rather than be discarded.
+- **Cost and latency make the queue in 7.4 mandatory, not optional.** A per-document vision
+  call is ~1–3 seconds and real money; it cannot sit on a webhook's timeout budget, and
+  repeated extraction of the same `contentHash` must be cached.
+- **Arabic.** Saudi receipts are routinely bilingual, and merchant names on the Arabic half
+  will not normalise with the Latin-oriented rules in `lib/matching/merchant.ts`. That is a
+  genuine piece of work, not a configuration flag.
+
+### 7.4 The rest, in priority order
+
 **Move processing off the webhook thread.** Steps 4–7 run inline. Storage already happens
 first, so the structure is right, but a real deployment should enqueue after persisting
 and have a worker call `processDocument`. That function is already separate and takes a
@@ -466,6 +561,27 @@ budget.
 storage keyed by `contentHash` so a document can be re-extracted when the OCR model
 improves, and so a reviewer can *see the receipt* — which today they cannot, and which is
 the single biggest gap in the review UI.
+
+**Postgres.** The String-column compromises in § 3 exist only because SQLite was mandated.
+A datasource swap turns them into real enums and `Json` with no application-code edits, and
+brings row-level locking that is stronger than the compare-and-set in § 4.
+
+**Observability.** `lib/logger.ts` is a `console` wrapper, as the brief supplies it. The
+numbers worth alerting on are already computable: auto-attach rate, review-queue age, and
+the share of documents reaching `UNMATCHED`. A sustained drop in auto-attach rate is the
+signal that an acquirer changed their merchant-name format — the kind of silent regression
+that otherwise surfaces as a reviewer complaining months later.
+
+**Retention and PII.** Receipts carry card digits and merchant history. Production needs a
+retention policy tied to the VAT statutory period, deletion on client offboarding, and
+`rawText` treated as sensitive — it is OCR output from a document that may contain more than
+anyone intended.
+
+**Rate limiting and replay defence.** HMAC verification proves a request came from the
+provider; it does not prove it is fresh. A captured valid payload can be replayed
+indefinitely. Production wants a timestamp-tolerance window and nonce tracking alongside the
+existing signature check.
+
 
 ### Multi-transaction invoices — design sketch
 
@@ -553,6 +669,16 @@ requirement, so it is a conversation, not a unilateral decision.
   re-ingestion.
 - The re-match sweep touches only `UNMATCHED` documents. `NEEDS_REVIEW` documents belong
   to a human and must not be reshuffled underneath them; `MATCHED` documents are settled.
+- **A rejection is permanent, and it is about a pairing rather than a document.** This
+  distinction is load-bearing. `UNMATCHED` is reached two ways — nothing ever matched, or a
+  reviewer rejected everything that did — and the column cannot tell them apart. Re-scoring
+  the second kind finds the same best candidate it found the first time and re-attaches it,
+  overwriting `decidedBy` from the reviewer back to `system`: the record that a human said
+  no is destroyed, in a product whose purpose is an auditable trail. So the sweep excludes
+  transactions already rejected for that document, and `persistMatchResult` refuses to
+  upsert over a `REJECTED` row whatever its caller asks for. Scoping it to the *pairing*
+  keeps the document open to a genuinely new transaction — otherwise "reject" would quietly
+  mean "discard forever". Both directions are pinned in `__tests__/rematch.test.ts`.
 - `MockExtractor` returns an `UNKNOWN` extraction for unrecognised content rather than
   throwing, because real OCR returns *something* for every input and the pipeline must
   handle a confident-looking nothing.

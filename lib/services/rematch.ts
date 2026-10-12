@@ -54,10 +54,33 @@ export async function rematchDocument(
   const document = await prisma.document.findUnique({ where: { id: documentId } });
   if (!document) return null;
 
+  // A rejection is a decision about a *pairing*, and it is permanent. Without this the
+  // sweep re-scores the transaction a reviewer already turned down and, finding it still
+  // the best fit, re-attaches it — overwriting `decidedBy` from the reviewer back to
+  // `system` and destroying the record that a human ever said no. The document stays
+  // open to genuinely new transactions; only the pairings a person ruled out are closed.
+  const rejected = await prisma.documentMatch.findMany({
+    where: { documentId, status: 'REJECTED' },
+    select: { transactionId: true },
+  });
+  const rejectedTransactionIds = rejected.map((row) => row.transactionId);
+
   const previousStatus = document.status as DocumentStatus;
   const matchable = toMatchableDocument(document);
-  const candidates = await selectCandidateTransactions(prisma, matchable, document.receivedAt);
+  const candidates = await selectCandidateTransactions(
+    prisma,
+    matchable,
+    document.receivedAt,
+    rejectedTransactionIds,
+  );
   const result = matchDocument(matchable, candidates);
+
+  // Nothing new to say: leave the document exactly as the reviewer left it, rather than
+  // overwriting `ALL_CANDIDATES_REJECTED` with the blander reason a fresh run produces.
+  if (result.candidates.length === 0 && rejectedTransactionIds.length > 0) {
+    return { documentId, previousStatus, status: previousStatus, changed: false };
+  }
+
   const status = await persistMatchResult(prisma, documentId, result);
 
   return { documentId, previousStatus, status, changed: status !== previousStatus };

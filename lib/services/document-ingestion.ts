@@ -300,12 +300,36 @@ export async function persistMatchResult(
     return 'UNMATCHED';
   }
 
-  const autoMatch = match.outcome === 'AUTO_MATCHED';
-  const winner = match.candidates[0];
+  // Defence in depth behind `rematchDocument`'s exclusion: a human's rejection of a
+  // (document, transaction) pairing is permanent, so no caller — however careless — gets
+  // to upsert over it. Without this guard the blind `update` below would reinstate a
+  // rejected row and overwrite `decidedBy` from the reviewer back to `system`.
+  const humanRejected = new Set(
+    (
+      await prisma.documentMatch.findMany({
+        where: { documentId, status: 'REJECTED' },
+        select: { transactionId: true },
+      })
+    ).map((row) => row.transactionId),
+  );
+
+  const writable = match.candidates.filter((c) => !humanRejected.has(c.transactionId));
+
+  if (writable.length === 0) {
+    // Everything the matcher found has already been ruled out by a person.
+    await prisma.document.update({
+      where: { id: documentId },
+      data: { status: 'UNMATCHED', failureReason: 'ALL_CANDIDATES_REJECTED' },
+    });
+    return 'UNMATCHED';
+  }
+
+  const autoMatch = match.outcome === 'AUTO_MATCHED' && !humanRejected.has(match.candidates[0].transactionId);
+  const winner = writable[0];
 
   try {
     return await prisma.$transaction(async (tx) => {
-      for (const candidate of match.candidates) {
+      for (const candidate of writable) {
         const isWinner = autoMatch && candidate.transactionId === winner.transactionId;
         const data = {
           confidence: candidate.confidence,
@@ -370,7 +394,7 @@ export async function persistMatchResult(
         transactionId: winner.transactionId,
       });
       await prisma.$transaction(async (tx) => {
-        for (const candidate of match.candidates) {
+        for (const candidate of writable) {
           await tx.documentMatch.upsert({
             where: {
               documentId_transactionId: { documentId, transactionId: candidate.transactionId },

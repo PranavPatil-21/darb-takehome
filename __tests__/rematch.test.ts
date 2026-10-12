@@ -3,6 +3,7 @@ import { MockExtractor, setExtractor } from '@/lib/extraction';
 import type { DocumentExtractor, ExtractedDocument } from '@/lib/extraction/types';
 import { ingestDocument } from '@/lib/services/document-ingestion';
 import { rematchDocument, rematchUnmatchedDocuments } from '@/lib/services/rematch';
+import { releaseConfirmedDocumentSlot } from '@/lib/services/slot-claim';
 import { resetDatabase, seedMinimalWorld, testPrisma } from './helpers/db';
 
 /**
@@ -146,5 +147,127 @@ describe('sweep scope', () => {
 
     expect(await rematchUnmatchedDocuments({ clientId: 2 }, testPrisma)).toEqual([]);
     expect(await rematchUnmatchedDocuments({ clientId: 1 }, testPrisma)).toHaveLength(1);
+  });
+});
+
+describe('the sweep respects human decisions', () => {
+  /**
+   * A rejection is a decision about a *pairing*, and it is permanent.
+   *
+   * The sweep selects on `status: 'UNMATCHED'`, and a document reaches that status two
+   * ways: it never matched anything, or a reviewer rejected everything it did match.
+   * Those look identical in the column. Re-scoring the second kind finds the same best
+   * candidate it found the first time, re-attaches it, and overwrites `decidedBy` from
+   * the reviewer back to `system` — so the record that a human ever said no is gone, in
+   * a product whose entire purpose is producing an auditable trail.
+   */
+  it('does not resurrect a match the reviewer rejected', async () => {
+    const result = await ingestDocument(
+      {
+        source: 'WHATSAPP',
+        externalId: 'wamid.REJECTED',
+        senderIdentifier: '966551234567',
+        bytes: readFixtureFile('whatsapp-alfanar-exact'),
+        mimeType: 'image/jpeg',
+        filename: 'alfanar.jpg',
+        receivedAt: new Date('2025-06-14T12:00:00Z'),
+      },
+      testPrisma,
+    );
+    expect(result.status).toBe('MATCHED');
+
+    const match = await testPrisma.documentMatch.findFirstOrThrow({
+      where: { documentId: result.documentId },
+    });
+
+    // Mirrors the body of `rejectMatch` in lib/actions/review.ts, calling the same
+    // slot-claim helper the action calls — the 'use server' module cannot be invoked
+    // from Jest outside a Next request context.
+    await testPrisma.$transaction(async (tx) => {
+      await releaseConfirmedDocumentSlot(tx.transaction, match.transactionId, match.documentId);
+      await tx.documentMatch.update({
+        where: { id: match.id },
+        data: { status: 'REJECTED', decidedBy: 'reviewer', decidedAt: new Date() },
+      });
+      const remaining = await tx.documentMatch.count({
+        where: { documentId: match.documentId, status: 'CANDIDATE' },
+      });
+      await tx.document.update({
+        where: { id: match.documentId },
+        data: {
+          status: remaining > 0 ? 'NEEDS_REVIEW' : 'UNMATCHED',
+          failureReason: remaining > 0 ? null : 'ALL_CANDIDATES_REJECTED',
+        },
+      });
+    });
+
+    const afterReject = await testPrisma.document.findUniqueOrThrow({
+      where: { id: result.documentId },
+    });
+    expect(afterReject.status).toBe('UNMATCHED');
+
+    // An unrelated transaction posts, triggering the sweep.
+    await testPrisma.transaction.create({
+      data: {
+        clientId: 1,
+        cardLast4: '9999',
+        driverPhone: '966551234567',
+        merchantName: 'SOMETHING ENTIRELY ELSE',
+        amount: 111,
+        transactionAt: new Date('2025-06-20T10:00:00Z'),
+      },
+    });
+    await rematchUnmatchedDocuments({ clientId: 1 }, testPrisma);
+
+    const afterSweep = await testPrisma.documentMatch.findUniqueOrThrow({
+      where: { id: match.id },
+    });
+    const document = await testPrisma.document.findUniqueOrThrow({
+      where: { id: result.documentId },
+    });
+    const transaction = await testPrisma.transaction.findUniqueOrThrow({
+      where: { id: match.transactionId },
+    });
+
+    expect(afterSweep.status).toBe('REJECTED');
+    expect(afterSweep.decidedBy).toBe('reviewer');
+    expect(document.status).toBe('UNMATCHED');
+    expect(transaction.confirmedDocumentId).toBeNull();
+  });
+
+  it('still matches a genuinely new transaction after an unrelated rejection', async () => {
+    // The rejection closes one pairing, not the document. A receipt whose real charge
+    // posts later must still find it, or "reject" would quietly mean "discard forever".
+    const result = await ingestDocument(
+      {
+        source: 'WHATSAPP',
+        externalId: 'wamid.ORPHAN2',
+        senderIdentifier: '966551234567',
+        bytes: readFixtureFile('whatsapp-orphan-receipt'),
+        mimeType: 'image/jpeg',
+        filename: 'kudu.jpg',
+        receivedAt: new Date('2025-06-19T14:00:00Z'),
+      },
+      testPrisma,
+    );
+    expect(result.status).toBe('UNMATCHED');
+
+    // The transaction it was actually waiting for posts.
+    await testPrisma.transaction.create({
+      data: {
+        clientId: 1,
+        cardLast4: '4412',
+        driverPhone: '966551234567',
+        merchantName: 'KUDU REST 118 RUH',
+        amount: 3300,
+        transactionAt: new Date('2025-06-19T13:12:00Z'),
+      },
+    });
+    await rematchUnmatchedDocuments({ clientId: 1 }, testPrisma);
+
+    const document = await testPrisma.document.findUniqueOrThrow({
+      where: { id: result.documentId },
+    });
+    expect(document.status).toBe('MATCHED');
   });
 });

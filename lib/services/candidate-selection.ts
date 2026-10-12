@@ -39,6 +39,14 @@ export async function selectCandidateTransactions(
   prisma: PrismaClient,
   doc: MatchableDocument,
   receivedAt: Date,
+  /**
+   * Transaction ids a human has already rejected for this document.
+   *
+   * Excluded from the set rather than filtered afterwards, so the matcher never ranks a
+   * pairing a person has ruled out — which also keeps the ambiguity margin honest, since
+   * a dead candidate must not be what pushes a live one into review.
+   */
+  excludeTransactionIds: readonly number[] = [],
 ): Promise<CandidateTransaction[]> {
   if (doc.clientId === null) return [];
 
@@ -48,6 +56,7 @@ export async function selectCandidateTransactions(
     where: {
       clientId: doc.clientId,
       transactionAt: { gte: from, lte: to },
+      ...(excludeTransactionIds.length > 0 ? { id: { notIn: [...excludeTransactionIds] } } : {}),
       // A WhatsApp document from a known driver may only see that driver's cards.
       ...(doc.source === 'WHATSAPP' && doc.driverPhone !== null
         ? { driverPhone: doc.driverPhone }

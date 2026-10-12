@@ -5,7 +5,7 @@ import { canSeeClient, resolveActor } from '@/lib/platform/identity';
 import { modulePath } from '@/lib/platform/module-config';
 import { documentHistory, ACTION_COPY } from '@/lib/platform/audit';
 import { documentationStatusOf } from '@/lib/platform/transaction-status';
-import { formatDay, formatMinorUnits, formatPercent, formatTime, REASON_COPY } from '@/lib/format';
+import { formatDay, formatMinorUnits, formatPercent, formatTime } from '@/lib/format';
 import { SOURCE_LABEL } from '@/lib/ui/vocabulary';
 import { Page, PageHeader, Section, FactGrid, EmptyState } from '@/components/shell/page';
 import { ChargeStatusPill } from '@/components/charges/charge-status-pill';

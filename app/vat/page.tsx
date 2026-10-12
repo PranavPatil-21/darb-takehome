@@ -4,6 +4,7 @@ import { formatPercent } from '@/lib/format';
 import { ExposureSummary } from '@/components/dashboard/exposure-summary';
 import { StatusBar } from '@/components/dashboard/status-bar';
 import { AgeingTable } from '@/components/dashboard/ageing-table';
+import { Page } from '@/components/shell/page';
 
 /**
  * The overview.
@@ -23,12 +24,12 @@ export default async function VatOverviewPage() {
   const data = await getDashboard(actor, new Date());
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-6 py-10">
+    <Page>
       <ExposureSummary data={data} />
       <StatusBar breakdown={data.byStatus} />
       <AgeingTable rows={data.ageing} />
       <EnginePerformance data={data} />
-    </main>
+    </Page>
   );
 }
 

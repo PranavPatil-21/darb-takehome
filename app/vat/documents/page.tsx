@@ -6,6 +6,7 @@ import { presentStatus, SOURCE_LABEL } from '@/lib/ui/vocabulary';
 import { StatusPill } from '@/components/documents/status-pill';
 import { formatDay, formatMinorUnits, REASON_COPY } from '@/lib/format';
 import type { DocumentStatus } from '@/lib/domain/enums';
+import { Page, PageHeader, EmptyState } from '@/components/shell/page';
 
 /**
  * The document register — the inbox side of the ledger.
@@ -43,15 +44,13 @@ export default async function DocumentRegisterPage({
   };
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-6 py-10">
-      <header>
-        <h1 className="text-xl font-semibold tracking-tight">Documents</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Everything WhatsApp and email delivered, whatever became of it.
-        </p>
-      </header>
+    <Page>
+      <PageHeader
+        title="Documents"
+        description="Everything WhatsApp and email delivered, whatever became of it."
+      />
 
-      <div className="mt-5 flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="flex flex-wrap gap-1.5">
           <Chip href={href()} active={!status} label="All" />
           {STATUSES.map((s) => (
@@ -85,15 +84,15 @@ export default async function DocumentRegisterPage({
       </div>
 
       {register.rows.length === 0 ? (
-        <div className="mt-8 rounded-lg border bg-card p-10 text-center">
-          <p className="font-medium">No documents match</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Try a different status, or clear the search.
-          </p>
-          <Link href={modulePath('documents')} className="mt-4 inline-block text-sm underline underline-offset-4">
-            Show everything
-          </Link>
-        </div>
+        <EmptyState
+          title="No documents match"
+          description="Try a different status, or clear the search."
+          action={
+            <Link href={modulePath('documents')} className="text-sm underline underline-offset-4">
+              Show everything
+            </Link>
+          }
+        />
       ) : (
         <ul className="mt-5 divide-y divide-border/60 border-y border-border/60">
           {register.rows.map((row) => (
@@ -138,7 +137,7 @@ export default async function DocumentRegisterPage({
           ))}
         </ul>
       )}
-    </main>
+    </Page>
   );
 }
 

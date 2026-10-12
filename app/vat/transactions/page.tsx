@@ -12,6 +12,7 @@ import { formatDay, formatMinorUnits } from '@/lib/format';
 import { ChargeStatusPill } from '@/components/charges/charge-status-pill';
 import { FilterChips } from '@/components/charges/filter-chips';
 import { SearchBox } from '@/components/charges/search-box';
+import { Page, PageHeader, EmptyState } from '@/components/shell/page';
 
 /**
  * The charge register — every card transaction, categorised.
@@ -57,17 +58,20 @@ export default async function ChargeRegisterPage({
   );
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-6 py-10">
-      <header>
-        <h1 className="text-xl font-semibold tracking-tight">Charges</h1>
-        <p className="mt-1 text-sm text-muted-foreground tabular-nums">
-          {register.matchedCount} {register.matchedCount === 1 ? 'charge' : 'charges'} ·{' '}
-          {formatMinorUnits(register.matchedValue)}
-          {status || age || params.q ? ' matching this filter' : ' in total'}
-        </p>
-      </header>
+    <Page>
+      <PageHeader
+        title="Charges"
+        description="Every card charge and whether a receipt supports it."
+        meta={
+          <p className="text-sm text-muted-foreground tabular-nums">
+            {register.matchedCount} {register.matchedCount === 1 ? 'charge' : 'charges'} ·{' '}
+            {formatMinorUnits(register.matchedValue)}
+            {status || age || params.q ? ' matching this filter' : ' in total'}
+          </p>
+        }
+      />
 
-      <div className="mt-5 flex flex-wrap items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <FilterChips
           counts={register.statusCounts}
           activeStatus={status}
@@ -87,18 +91,18 @@ export default async function ChargeRegisterPage({
       ) : null}
 
       {register.rows.length === 0 ? (
-        <div className="mt-8 rounded-lg border bg-card p-10 text-center">
-          <p className="font-medium">Nothing matches this filter</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Try a different status, or clear the search.
-          </p>
-          <Link
-            href={modulePath('transactions')}
-            className="mt-4 inline-block text-sm underline underline-offset-4"
-          >
-            Show all charges
-          </Link>
-        </div>
+        <EmptyState
+          title="Nothing matches this filter"
+          description="Try a different status, or clear the search."
+          action={
+            <Link
+              href={modulePath('transactions')}
+              className="text-sm underline underline-offset-4"
+            >
+              Show all charges
+            </Link>
+          }
+        />
       ) : (
         <div className="mt-5 overflow-x-auto">
           <table className="w-full min-w-[46rem] border-collapse text-sm">
@@ -159,6 +163,6 @@ export default async function ChargeRegisterPage({
         Status is derived from the charge&rsquo;s confirmed document, not stored — so it cannot
         drift from the attachment it describes. {TRANSACTION_STATUS.MISSING.hint}
       </p>
-    </main>
+    </Page>
   );
 }

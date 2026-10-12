@@ -4,6 +4,7 @@ import { modulePath } from '@/lib/platform/module-config';
 import { EXCEPTION_KIND_LABEL, getExceptions, type ExceptionRow } from '@/lib/platform/document-register';
 import { SOURCE_LABEL } from '@/lib/ui/vocabulary';
 import { formatDay, formatMinorUnits } from '@/lib/format';
+import { Page, PageHeader, Section, EmptyState } from '@/components/shell/page';
 
 /**
  * The exception register — everything the happy path could not place.
@@ -32,39 +33,31 @@ export default async function ExceptionsPage() {
   })).filter((group) => group.rows.length > 0);
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-6 py-10">
-      <header>
-        <h1 className="text-xl font-semibold tracking-tight">Exceptions</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {exceptions.length === 0
+    <Page>
+      <PageHeader
+        title="Exceptions"
+        description={
+          exceptions.length === 0
             ? 'Nothing is stuck.'
-            : `${exceptions.length} ${exceptions.length === 1 ? 'document is' : 'documents are'} stuck in a way that waiting will not resolve.`}
-        </p>
-      </header>
+            : `${exceptions.length} ${exceptions.length === 1 ? 'document is' : 'documents are'} stuck in a way that waiting will not resolve.`
+        }
+      />
 
       {exceptions.length === 0 ? (
-        <div className="mt-8 rounded-lg border bg-card p-10 text-center">
-          <p className="font-medium">Nothing stuck</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Every document either attached itself, is waiting on a charge to post, or is in
-            the review queue.
-          </p>
-        </div>
+        <EmptyState
+          title="Nothing stuck"
+          description="Every document either attached itself, is waiting on a charge to post, or is in the review queue."
+        />
       ) : (
-        <div className="mt-8 space-y-10">
+        <div>
           {groups.map((group) => (
-            <section key={group.kind}>
-              <h2 className="text-sm font-medium">
-                {EXCEPTION_KIND_LABEL[group.kind]}
-                <span className="ml-2 text-xs font-normal text-muted-foreground tabular-nums">
-                  {group.rows.length}
-                </span>
-              </h2>
-              <p className="mt-0.5 max-w-2xl text-xs text-muted-foreground">
-                {group.rows[0].whatToDo}
-              </p>
+            <Section
+              key={group.kind}
+              title={`${EXCEPTION_KIND_LABEL[group.kind]} · ${group.rows.length}`}
+              description={group.rows[0].whatToDo}
+            >
 
-              <ul className="mt-3 divide-y divide-border/60 border-y border-border/60">
+              <ul className="divide-y divide-border/60 border-y border-border/60">
                 {group.rows.map((row) => (
                   <li key={row.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3">
                     <span className="min-w-0 flex-1">
@@ -91,10 +84,10 @@ export default async function ExceptionsPage() {
                   </Link>
                 </p>
               ) : null}
-            </section>
+            </Section>
           ))}
         </div>
       )}
-    </main>
+    </Page>
   );
 }

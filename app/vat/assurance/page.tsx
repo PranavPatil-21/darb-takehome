@@ -4,6 +4,7 @@ import { moduleConfig, modulePath } from '@/lib/platform/module-config';
 import { getAssuranceQueue } from '@/lib/platform/assurance-queue';
 import { formatDay, formatMinorUnits, formatPercent, formatTime } from '@/lib/format';
 import { AssuranceActions } from '@/components/assurance/assurance-actions';
+import { Page, PageHeader, EmptyState } from '@/components/shell/page';
 
 /**
  * The checker's queue.
@@ -26,61 +27,48 @@ export default async function AssurancePage() {
 
   if (!can(actor, 'verify')) {
     return (
-      <main className="mx-auto w-full max-w-5xl px-6 py-10">
-        <h1 className="text-xl font-semibold tracking-tight">Assurance</h1>
-        <div className="mt-8 rounded-lg border bg-card p-10 text-center">
-          <p className="font-medium">This queue is not yours</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Signing off an attachment requires the <code className="text-xs">verify</code>{' '}
-            permission, and it is deliberately separate from the permission to attach — the
-            person who made a decision cannot be the one who approves it.
-          </p>
-        </div>
-      </main>
+      <Page>
+        <PageHeader title="Assurance" />
+        <EmptyState
+          title="This queue is not yours"
+          description="Signing off an attachment requires the verify permission, and it is deliberately separate from the permission to attach — the person who made a decision cannot be the one who approves it."
+        />
+      </Page>
     );
   }
 
   if (config.makerChecker.mode === 'OFF') {
     return (
-      <main className="mx-auto w-full max-w-5xl px-6 py-10">
-        <h1 className="text-xl font-semibold tracking-tight">Assurance</h1>
-        <div className="mt-8 rounded-lg border bg-card p-10 text-center">
-          <p className="font-medium">Independent sign-off is switched off</p>
-          <p className="mx-auto mt-1 max-w-lg text-sm text-muted-foreground">
-            Attachments stand on the decision of whoever made them. Turn the control on by
-            setting <code className="text-xs">DARB_MAKER_CHECKER</code> to{' '}
-            <code className="text-xs">POST_HOC</code>, and new attachments will be selected
-            for review by value and by sampling.
-          </p>
-        </div>
-      </main>
+      <Page>
+        <PageHeader title="Assurance" />
+        <EmptyState
+          title="Independent sign-off is switched off"
+          description="Attachments stand on the decision of whoever made them. Set DARB_MAKER_CHECKER to POST_HOC and new attachments will be selected for review by value and by sampling."
+        />
+      </Page>
     );
   }
 
   const queue = await getAssuranceQueue(actor);
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-6 py-10">
-      <header>
-        <h1 className="text-xl font-semibold tracking-tight">Assurance</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {queue.length === 0
+    <Page>
+      <PageHeader
+        title="Assurance"
+        description={
+          queue.length === 0
             ? 'Nothing is waiting on a second pair of eyes.'
-            : `${queue.length} ${queue.length === 1 ? 'attachment needs' : 'attachments need'} an independent sign-off. Largest first.`}
-        </p>
-      </header>
+            : `${queue.length} ${queue.length === 1 ? 'attachment needs' : 'attachments need'} an independent sign-off. Largest first.`
+        }
+      />
 
       {queue.length === 0 ? (
-        <div className="mt-8 rounded-lg border bg-card p-10 text-center">
-          <p className="font-medium">All clear</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Every attachment selected for review has been signed off. New ones appear here
-            when they are above {formatMinorUnits(config.makerChecker.materialityThreshold)},
-            attached automatically, or drawn by sampling.
-          </p>
-        </div>
+        <EmptyState
+          title="All clear"
+          description={`Every attachment selected for review has been signed off. New ones appear here when they are above ${formatMinorUnits(config.makerChecker.materialityThreshold)}, attached automatically, or drawn by sampling.`}
+        />
       ) : (
-        <ul className="mt-6 space-y-4">
+        <ul className="space-y-4">
           {queue.map((row) => (
             <li key={row.matchId} className="rounded-lg border bg-card p-4">
               <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
@@ -153,6 +141,6 @@ export default async function AssurancePage() {
         attachment, and by {Math.round(config.makerChecker.sampleRate * 100)}% sampling of
         everything else — so &ldquo;small&rdquo; does not become a blind spot.
       </p>
-    </main>
+    </Page>
   );
 }

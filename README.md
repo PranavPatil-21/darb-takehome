@@ -29,6 +29,10 @@ Then, in a second terminal:
 npm run webhooks:demo
 ```
 
+The script signs every request with the HMAC secret from `.env`, so it behaves the same
+under `npm run dev` and `npm start` — the latter runs in production mode, where unsigned
+webhooks are always refused.
+
 That fires nineteen sample payloads through both webhooks and prints what the pipeline
 decided for each, annotated with the behaviour it demonstrates. Between them they reach
 **every one of the nine reason codes the matcher can return**, so the script doubles as an

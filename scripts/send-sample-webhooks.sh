@@ -11,7 +11,27 @@
 set -uo pipefail
 
 BASE_URL="${BASE_URL:-http://localhost:3000}"
-PAYLOAD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/fixtures/payloads"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PAYLOAD_DIR="${ROOT_DIR}/fixtures/payloads"
+
+# Sign every request when a secret is available.
+#
+# `npm run dev` accepts unsigned requests so this script works out of the box, but
+# `npm start` runs in production mode where unsigned webhooks are always refused — a
+# security default that fails closed. Signing here means the demo behaves identically in
+# both, and exercises the HMAC path rather than skipping past it.
+if [ -f "${ROOT_DIR}/.env" ]; then
+  # shellcheck disable=SC1091
+  set -a; . "${ROOT_DIR}/.env"; set +a
+fi
+
+sign() {
+  local body="$1" secret="$2"
+  [ -z "${secret:-}" ] && return 0
+  command -v openssl >/dev/null 2>&1 || return 0
+  printf '%s' "$body" | openssl dgst -sha256 -hmac "$secret" -hex 2>/dev/null |
+    sed 's/^.*= /sha256=/'
+}
 
 bold()  { printf '\033[1m%s\033[0m\n' "$1"; }
 dim()   { printf '\033[2m%s\033[0m\n' "$1"; }
@@ -21,10 +41,26 @@ send() {
   bold "→ ${file}"
   dim  "  ${note}"
 
+  local body signature header secret
+  body=$(cat "${PAYLOAD_DIR}/${file}.json")
+  if [ "$endpoint" = "whatsapp" ]; then
+    header='x-hub-signature-256'; secret="${WHATSAPP_WEBHOOK_SECRET:-}"
+  else
+    header='x-darb-signature';    secret="${EMAIL_WEBHOOK_SECRET:-}"
+  fi
+  signature=$(sign "$body" "$secret")
+
   local response
-  response=$(curl -sS -X POST "${BASE_URL}/api/webhooks/${endpoint}" \
-    -H 'content-type: application/json' \
-    --data-binary "@${PAYLOAD_DIR}/${file}.json" 2>&1)
+  if [ -n "${signature:-}" ]; then
+    response=$(curl -sS -X POST "${BASE_URL}/api/webhooks/${endpoint}" \
+      -H 'content-type: application/json' \
+      -H "${header}: ${signature}" \
+      --data-binary "${body}" 2>&1)
+  else
+    response=$(curl -sS -X POST "${BASE_URL}/api/webhooks/${endpoint}" \
+      -H 'content-type: application/json' \
+      --data-binary "${body}" 2>&1)
+  fi
 
   if command -v jq >/dev/null 2>&1; then
     printf '%s\n\n' "$(echo "$response" | jq -c '.')"

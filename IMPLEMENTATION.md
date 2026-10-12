@@ -212,6 +212,49 @@ raise with the team rather than decide unilaterally.
 Both directions are tested: `collapses the same photo sent twice under different message
 ids`, and `collapses identical file content regardless of which sender submitted it`.
 
+### Added: `reason` on `MatchResult`
+
+The brief's `MatchResult` carries `outcome` and `candidates`. This one adds a third field,
+`reason` — a closed union naming *why* the engine landed where it did
+(`AMBIGUOUS_TOP_CANDIDATES`, `WEAK_EVIDENCE`, `TRANSACTION_ALREADY_DOCUMENTED`, and six
+others).
+
+It exists because `NEEDS_REVIEW` on its own tells a reviewer nothing. Two documents can
+reach the review queue for opposite reasons — one because two transactions tie perfectly,
+another because almost nothing could be read off the page — and the work required to clear
+them is completely different. The outcome is the same; the question being asked of the human
+is not. `reason` is what the review queue shows as the headline, and it is stored on the
+document so the queue does not have to re-derive it.
+
+The addition is additive: `outcome` and `candidates` keep the exact shape and semantics the
+brief specifies, and `MatchCandidate` is unchanged (`signals` is `Record<string, number>` as
+written).
+
+### Not created: the `types/` directory
+
+The brief's project-structure diagram ends with a `types/` folder and does not say what goes
+in it. Nothing in this implementation needed it: the extractor contract the brief specifies
+lives at `lib/extraction/types.ts` where the brief itself puts it, the domain unions and
+their Zod schemas live in `lib/domain/enums.ts` next to the code that validates against
+them, and every DTO is declared in the module that owns it.
+
+Creating the directory to satisfy the diagram would mean either committing a placeholder
+file or relocating types away from the code they describe — adding indirection to look
+compliant. Git cannot track an empty directory in any case, so a reviewer cloning the repo
+would not see one. Flagging the omission seemed better than either.
+
+### Grown: seed and fixture counts
+
+The brief asks for "~15 transactions across 2 clients" and "at least 6 fixture documents".
+This seeds 22 transactions and ships 18 fixtures.
+
+The extra rows are not padding — each one is reached by exactly one demo scenario. The brief's
+six edge cases needed roughly its suggested volume; demonstrating the remaining scoring rules
+end-to-end (the VAT tolerance, the date curve, the three vetoes, the already-documented rule,
+weak evidence, an empty candidate set) needed a transaction apiece. Transactions 17-22 and the
+last eight fixtures exist for that, on a driver deliberately isolated from everything else so
+they cannot perturb the original scenarios. See § 4a.
+
 ### Changed: scoping is a filter, not a scored signal
 
 The brief lists sender scoping among the signals. Scoring it `0..1` would let a strong
@@ -313,8 +356,8 @@ paid for the first of those once.
 
 ## 5. Testing
 
-**176 tests across 9 suites.** Distribution follows the brief's instruction to put most
-effort into the matcher — 88 of the 176 tests exercise the matching engine alone.
+**179 tests across 9 suites.** Distribution follows the brief's instruction to put most
+effort into the matcher — 88 of the 179 tests exercise the matching engine alone.
 
 | Suite | Tests | Covers |
 |---|---|---|
@@ -322,7 +365,7 @@ effort into the matcher — 88 of the 176 tests exercise the matching engine alo
 | `matcher-edge-cases` | 55 | Every threshold probed on both sides of its boundary |
 | `merchant` | 18 | Normalisation and similarity against real acquirer strings |
 | `document-ingestion` | 19 | Idempotency (including concurrent), failure isolation, scoping |
-| `webhooks` | 15 | 400 on malformed, never 500, HMAC verification |
+| `webhooks` | 18 | 400 on malformed, never 500, HMAC verification |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
 | `rematch` | 9 | Late-arriving transactions, sweep scope, no OCR replay |

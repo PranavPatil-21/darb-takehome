@@ -82,7 +82,7 @@ Client, including the malformed payloads that return `400`.
 ## Tests
 
 ```bash
-npm test           # 176 tests, 9 suites
+npm test           # 179 tests, 9 suites
 npm run typecheck  # tsc --noEmit, strict
 npm run build      # production build
 ```
@@ -126,7 +126,7 @@ lib/
   actions/review.ts                 confirm / reject server actions
   webhooks/                         Zod schemas, HMAC, response helpers
 prisma/schema.prisma, seed.ts       2 clients · 8 senders · 22 transactions
-fixtures/                           10 documents + generated webhook payloads
+fixtures/                           18 documents + their webhook payloads
 ```
 
 ---

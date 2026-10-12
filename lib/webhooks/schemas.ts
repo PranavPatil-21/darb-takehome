@@ -49,8 +49,22 @@ export const whatsappMessageSchema = z
   .object({
     id: z.string().min(1),
     from: z.string().min(1),
-    /** Unix seconds, as a string — Meta's format. */
-    timestamp: z.string().min(1),
+    /**
+     * Unix seconds, as a string — Meta's format.
+     *
+     * Validated as numeric *here* rather than left to `Number()` downstream. A
+     * non-numeric value yields `new Date(NaN)`, an Invalid Date that survives every
+     * intermediate step and only fails at the database write — turning a malformed
+     * payload into an opaque "accepted but not processed" instead of the 400 naming the
+     * offending field that the brief asks for and the sender can actually act on. The
+     * second check catches values too large to be a representable date.
+     */
+    timestamp: z
+      .string()
+      .regex(/^\d+$/, 'timestamp must be Unix seconds as a digit string')
+      .refine((value) => !Number.isNaN(new Date(Number(value) * 1000).getTime()), {
+        message: 'timestamp is not a representable date',
+      }),
     type: z.string().min(1),
     image: whatsappImageSchema.optional(),
     document: whatsappDocumentSchema.optional(),

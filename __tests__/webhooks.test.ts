@@ -171,6 +171,46 @@ describe('whatsapp webhook', () => {
     expect(body.issues.some((issue: { path: string }) => issue.path.endsWith('image'))).toBe(true);
   });
 
+  it.each([
+    ['non-numeric', 'not-a-number'],
+    ['empty-ish whitespace', ' '],
+    ['too large to be a date', '99999999999999'],
+  ])('returns 400 for a %s timestamp, naming the field', async (_label, timestamp) => {
+    // An unparseable timestamp used to pass validation and fail at the database write
+    // instead, which returned an opaque 200 "accepted but not processed". The sender
+    // learns nothing from that; a 400 naming the field is something they can act on, and
+    // it is what the brief asks for a malformed payload.
+    const payload = {
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    id: 'wamid.BADTS',
+                    from: '966551234567',
+                    timestamp,
+                    type: 'image',
+                    image: { id: 'media_4471', mime_type: 'image/jpeg' },
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const response = await whatsappPost(post('http://localhost/api/webhooks/whatsapp', payload));
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(
+      body.issues.some((issue: { path: string }) => issue.path.endsWith('timestamp')),
+    ).toBe(true);
+  });
+
   it('acknowledges a status-only callback without creating anything', async () => {
     const response = await whatsappPost(
       post('http://localhost/api/webhooks/whatsapp', {

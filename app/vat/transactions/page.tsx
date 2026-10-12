@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import Link from 'next/link';
 import { resolveActor } from '@/lib/platform/identity';
 import { modulePath } from '@/lib/platform/module-config';
@@ -61,7 +62,7 @@ export default async function ChargeRegisterPage({
     <Page>
       <PageHeader
         title="Charges"
-        description="Every card charge and whether a receipt supports it."
+        description={t('charges.subtitle')}
         meta={
           <p className="text-sm text-muted-foreground tabular-nums">
             {register.matchedCount} {register.matchedCount === 1 ? 'charge' : 'charges'} ·{' '}
@@ -92,8 +93,8 @@ export default async function ChargeRegisterPage({
 
       {register.rows.length === 0 ? (
         <EmptyState
-          title="Nothing matches this filter"
-          description="Try a different status, or clear the search."
+          title={t('charges.empty.title')}
+          description={t('charges.empty.body')}
           action={
             <Link
               href={modulePath('transactions')}

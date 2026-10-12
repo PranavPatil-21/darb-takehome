@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import { cn } from '@/lib/utils';
 import type { ComparisonRow, ComparisonVerdict } from '@/lib/ui/comparison';
 
@@ -39,8 +40,8 @@ export function ComparisonTable({
           numbers and the reader has to infer which side is which — every single row. */}
       <div className="grid grid-cols-2 gap-x-3 pb-1.5 text-xs text-muted-foreground sm:grid-cols-[5.5rem_1fr_1fr]">
         <span className="hidden sm:block" />
-        <span>Receipt</span>
-        <span>Charge</span>
+        <span>{t('compare.receipt')}</span>
+        <span>{t('compare.charge')}</span>
       </div>
 
       {rows.map((row) => {

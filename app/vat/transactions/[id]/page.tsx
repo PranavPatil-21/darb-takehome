@@ -1,9 +1,10 @@
+import { t } from '@/lib/content/messages';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import prisma from '@/lib/prisma';
 import { canSeeClient, resolveActor } from '@/lib/platform/identity';
 import { modulePath } from '@/lib/platform/module-config';
-import { documentHistory, ACTION_COPY } from '@/lib/platform/audit';
+import { documentHistory, actionCopy } from '@/lib/platform/audit';
 import { documentationStatusOf } from '@/lib/platform/transaction-status';
 import { formatDay, formatMinorUnits, formatPercent, formatTime } from '@/lib/format';
 import { SOURCE_LABEL } from '@/lib/ui/vocabulary';
@@ -85,7 +86,7 @@ export default async function ChargeDetailPage({
   return (
     <Page>
       <PageHeader
-        back={{ href: modulePath('transactions'), label: 'All charges' }}
+        back={{ href: modulePath('transactions'), label: t('charge.back') }}
         title={charge.merchantName}
         description={`${charge.client.name} · card ••••${charge.cardLast4}`}
         meta={<ChargeStatusPill status={status} />}
@@ -100,7 +101,7 @@ export default async function ChargeDetailPage({
               value: `${formatDay(charge.transactionAt)} · ${formatTime(charge.transactionAt)}`,
             },
             { label: 'Card', value: `•••• ${charge.cardLast4}` },
-            { label: 'Driver', value: charge.driverPhone ?? 'Pool card — no driver' },
+            { label: t('charge.fact.driver'), value: charge.driverPhone ?? t('charge.fact.noDriver') },
           ]}
         />
       </Section>
@@ -124,7 +125,7 @@ export default async function ChargeDetailPage({
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {attached.vatNumber
                     ? `VAT number ${attached.vatNumber}`
-                    : 'No VAT number on this document'}
+                    : t('review.vat.absent')}
                 </p>
               </div>
             </div>
@@ -140,11 +141,11 @@ export default async function ChargeDetailPage({
           </div>
         ) : (
           <EmptyState
-            title="No receipt attached"
+            title={t('charge.noReceipt.title')}
             description={
               candidates.length > 0
-                ? 'A receipt has been proposed for this charge and is waiting on a decision.'
-                : 'Nothing has been proposed for this charge. It needs a receipt before the filing.'
+                ? t('charge.noReceipt.proposed')
+                : t('charge.noReceipt.none')
             }
             action={
               candidates.length > 0 ? (
@@ -162,8 +163,8 @@ export default async function ChargeDetailPage({
 
       {charge.documents.length > 0 ? (
         <Section
-          title="Everything considered"
-          description="Every document the matcher scored against this charge, and what became of it."
+          title={t('charge.considered.title')}
+          description={t('charge.considered.hint')}
         >
           <ul className="divide-y divide-border/60 border-y border-border/60">
             {charge.documents.map((match) => (
@@ -172,7 +173,7 @@ export default async function ChargeDetailPage({
                 className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3"
               >
                 <span className="min-w-0 flex-1 truncate text-sm">
-                  {match.document.merchantName ?? 'Unreadable document'}
+                  {match.document.merchantName ?? t('common.unreadableDocument')}
                 </span>
                 <span className="flex shrink-0 items-center gap-4 text-xs text-muted-foreground tabular-nums">
                   <span>{formatMinorUnits(match.document.totalAmount, match.document.currency ?? 'SAR')}</span>
@@ -195,7 +196,7 @@ export default async function ChargeDetailPage({
       {history.length > 0 ? (
         <Section
           title="History"
-          description="Every decision taken about the attached receipt, in order."
+          description={t('charge.history.hint')}
         >
           <ol className="space-y-3 border-l pl-4">
             {history.map((event) => (
@@ -205,7 +206,7 @@ export default async function ChargeDetailPage({
                   className="absolute -left-[1.3125rem] top-1.5 size-2 rounded-full bg-border ring-4 ring-background"
                 />
                 <p className="text-sm">
-                  {ACTION_COPY[event.action] ?? event.action}
+                  {actionCopy(event.action)}
                   {event.actorRole === 'SYSTEM' ? '' : ` ${event.actorId}`}
                   {event.confidence !== null ? (
                     <span className="text-muted-foreground"> · {formatPercent(event.confidence)}</span>

@@ -15,6 +15,8 @@
  * column written by hand from four call sites, which is how the drift starts.
  */
 
+import { ageLabel, chargeStatusHint, chargeStatusLabel } from '@/lib/content/messages';
+
 export type TransactionDocumentationStatus =
   /** A document is attached. Nothing to do. */
   | 'DOCUMENTED'
@@ -33,29 +35,37 @@ export interface StatusPresentation {
   tone: 'settled' | 'attention' | 'waiting' | 'neutral';
 }
 
+/**
+ * Tone per status; the words come from the content layer.
+ *
+ * Only the colour role is a code decision — the label and the hint are copy, and copy has
+ * one home so it can be reviewed, overridden by a host and translated.
+ */
+const STATUS_TONE: Readonly<Record<TransactionDocumentationStatus, StatusPresentation['tone']>> = {
+  DOCUMENTED: 'settled',
+  IN_REVIEW: 'attention',
+  REJECTED: 'attention',
+  MISSING: 'waiting',
+};
+
+export function presentChargeStatus(
+  status: TransactionDocumentationStatus,
+): StatusPresentation {
+  return {
+    label: chargeStatusLabel(status),
+    hint: chargeStatusHint(status),
+    tone: STATUS_TONE[status],
+  };
+}
+
+/** Kept as a lookup for call sites that read it like a table. */
 export const TRANSACTION_STATUS: Readonly<
   Record<TransactionDocumentationStatus, StatusPresentation>
 > = {
-  DOCUMENTED: {
-    label: 'Documented',
-    hint: 'A receipt is attached to this charge.',
-    tone: 'settled',
-  },
-  IN_REVIEW: {
-    label: 'In review',
-    hint: 'A receipt has been proposed and is waiting on a decision.',
-    tone: 'attention',
-  },
-  REJECTED: {
-    label: 'Receipt rejected',
-    hint: 'Every receipt proposed for this charge was rejected. It still needs one.',
-    tone: 'attention',
-  },
-  MISSING: {
-    label: 'No receipt',
-    hint: 'Nothing has been proposed for this charge yet.',
-    tone: 'waiting',
-  },
+  get DOCUMENTED() { return presentChargeStatus('DOCUMENTED'); },
+  get IN_REVIEW() { return presentChargeStatus('IN_REVIEW'); },
+  get REJECTED() { return presentChargeStatus('REJECTED'); },
+  get MISSING() { return presentChargeStatus('MISSING'); },
 };
 
 export interface StatusInput {
@@ -133,10 +143,10 @@ export function ageBucket(days: number): AgeBucket {
 }
 
 export const AGE_BUCKET_LABEL: Readonly<Record<AgeBucket, string>> = {
-  '0-7': 'Up to a week',
-  '8-30': '1 to 4 weeks',
-  '31-60': '1 to 2 months',
-  '60+': 'Over 2 months',
+  get '0-7'() { return ageLabel('0-7'); },
+  get '8-30'() { return ageLabel('8-30'); },
+  get '31-60'() { return ageLabel('31-60'); },
+  get '60+'() { return ageLabel('60+'); },
 };
 
 /**

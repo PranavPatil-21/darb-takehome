@@ -1,5 +1,6 @@
 'use server';
 
+import { t } from '@/lib/content/messages';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import { Prisma } from '@prisma/client';
@@ -61,7 +62,7 @@ export const confirmMatch = actionClient
     if (!can(actor, 'decide')) {
       // Authorisation is checked on the write path, not only in the interface: a button
       // that is not rendered is not a control.
-      throw new Error('You do not have permission to decide matches');
+      throw new Error(t('result.denied.decide'));
     }
 
     const result = await prisma
@@ -192,7 +193,7 @@ export const rejectMatch = actionClient
     const actor = await resolveActor();
 
     if (!can(actor, 'decide')) {
-      throw new Error('You do not have permission to decide matches');
+      throw new Error(t('result.denied.decide'));
     }
 
     const result = await prisma.$transaction(async (tx) => {
@@ -216,7 +217,7 @@ export const rejectMatch = actionClient
           effect: 'ALREADY_DECIDED' as const,
           documentId: match.documentId,
           documentStatus: document.status,
-          message: 'This candidate was already rejected.',
+          message: t('result.alreadyRejected'),
         };
       }
 
@@ -263,7 +264,7 @@ export const rejectMatch = actionClient
         message:
           remaining > 0
             ? `Rejected. ${remaining} candidate${remaining === 1 ? '' : 's'} still to review.`
-            : 'Rejected. No candidates left — the document is back in the unmatched pool.',
+            : t('result.noneLeft'),
       };
     });
 

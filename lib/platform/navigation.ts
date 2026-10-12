@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import type { Actor, Capability } from '@/lib/platform/identity';
 import { can } from '@/lib/platform/identity';
 import { modulePath } from '@/lib/platform/module-config';
@@ -28,14 +29,14 @@ export const NAV_ITEMS: readonly NavItem[] = [
   {
     label: 'Overview',
     href: modulePath(),
-    hint: 'Coverage, exposure and what needs attention',
+    hint: t('nav.overview.hint'),
   },
   {
     label: 'Review',
     href: modulePath('review'),
     requires: 'decide',
     badge: 'review',
-    hint: 'Documents the matcher would not decide on its own',
+    hint: t('nav.review.hint'),
   },
   {
     label: 'Assurance',
@@ -45,23 +46,23 @@ export const NAV_ITEMS: readonly NavItem[] = [
     // attaches receipts implied the two are different jobs; they are the same job, and the
     // only thing they may not do is sign off their own attachment.
     badge: 'assurance',
-    hint: 'Attachments awaiting an independent sign-off',
+    hint: t('nav.assurance.hint'),
   },
   {
     label: 'Charges',
     href: modulePath('transactions'),
-    hint: 'Every card charge and its documentation status',
+    hint: t('nav.charges.hint'),
   },
   {
     label: 'Documents',
     href: modulePath('documents'),
-    hint: 'Everything WhatsApp and email delivered',
+    hint: t('nav.documents.hint'),
   },
   {
     label: 'Exceptions',
     href: modulePath('exceptions'),
     badge: 'exceptions',
-    hint: 'What the happy path could not place',
+    hint: t('nav.exceptions.hint'),
   },
 ];
 

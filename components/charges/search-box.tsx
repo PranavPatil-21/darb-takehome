@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import { modulePath } from '@/lib/platform/module-config';
 import type { AgeBucket, TransactionDocumentationStatus } from '@/lib/platform/transaction-status';
 
@@ -30,7 +31,7 @@ export function SearchBox({
         id="charge-search"
         name="q"
         defaultValue={defaultValue}
-        placeholder="Merchant or card"
+        placeholder={t('charges.search.placeholder')}
         className="h-8 w-48 rounded-md border bg-background px-3 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <button

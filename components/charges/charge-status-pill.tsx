@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import { cn } from '@/lib/utils';
 import {
   TRANSACTION_STATUS,
@@ -48,7 +49,7 @@ export function ChargeStatusPill({
 
       {awaitingVerification ? (
         <span
-          title="Attached, but still waiting on an independent sign-off"
+          title={t('chargeStatus.awaitingSignOff.hint')}
           className="text-xs text-muted-foreground"
         >
           · sign-off due

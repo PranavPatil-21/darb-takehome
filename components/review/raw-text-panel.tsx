@@ -1,3 +1,5 @@
+
+import { t } from '@/lib/content/messages';
 /**
  * What was actually sent.
  *
@@ -16,7 +18,7 @@
 export function RawTextPanel({ text, source }: { text: string | null; source: string }) {
   if (!text || text.trim() === '') return null;
 
-  const heading = source === 'EMAIL' ? 'What the supplier sent' : 'What the driver sent';
+  const heading = t(source === 'EMAIL' ? 'review.rawText.email' : 'review.rawText.whatsapp');
 
   return (
     <section className="mt-5">

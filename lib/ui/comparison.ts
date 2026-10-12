@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import { MAX_DATE_DRIFT_DAYS, VAT_ROUNDING_TOLERANCE_HALALAS } from '@/lib/matching/scoring-config';
 
 /**
@@ -81,7 +82,7 @@ function compareAmount(doc: ComparableDocument, charge: ComparableCharge): Compa
       documentValue: null,
       chargeValue,
       verdict: 'NOT_ON_DOCUMENT',
-      note: 'No total could be read from this document.',
+      note: t('compare.note.noAmount'),
     };
   }
 
@@ -101,7 +102,7 @@ function compareAmount(doc: ComparableDocument, charge: ComparableCharge): Compa
       documentValue,
       chargeValue,
       verdict: 'CLOSE',
-      note: 'Differs by a few halalas — VAT rounding.',
+      note: t('compare.note.rounding'),
     };
   }
 
@@ -127,7 +128,7 @@ function compareDate(doc: ComparableDocument, charge: ComparableCharge): Compari
       documentValue: null,
       chargeValue,
       verdict: 'NOT_ON_DOCUMENT',
-      note: 'No date could be read from this document.',
+      note: t('compare.note.noDate'),
     };
   }
 
@@ -168,7 +169,7 @@ function compareCard(doc: ComparableDocument, charge: ComparableCharge): Compari
       documentValue: null,
       chargeValue,
       verdict: 'NOT_ON_DOCUMENT',
-      note: 'No card number printed on this document.',
+      note: t('compare.note.noCard'),
     };
   }
 
@@ -183,7 +184,7 @@ function compareCard(doc: ComparableDocument, charge: ComparableCharge): Compari
     verdict: same ? 'AGREES' : 'DIFFERS',
     // The card number is the one field OCR rarely gets subtly wrong, so a mismatch here
     // is close to decisive — worth saying out loud rather than leaving as a red bar.
-    note: same ? null : 'Different card. This receipt belongs to another charge.',
+    note: same ? null : t('compare.note.otherCard'),
   };
 }
 
@@ -197,7 +198,7 @@ function compareMerchant(doc: ComparableDocument, charge: ComparableCharge): Com
       documentValue: null,
       chargeValue: charge.merchantName,
       verdict: 'NOT_ON_DOCUMENT',
-      note: 'No merchant name could be read from this document.',
+      note: t('compare.note.noMerchant'),
     };
   }
 
@@ -213,7 +214,7 @@ function compareMerchant(doc: ComparableDocument, charge: ComparableCharge): Com
     documentValue: doc.merchantName,
     chargeValue: charge.merchantName,
     verdict: exact ? 'AGREES' : 'CLOSE',
-    note: exact ? null : 'Acquirer names are abbreviated and carry branch codes.',
+    note: exact ? null : t('compare.note.acquirer'),
   };
 }
 

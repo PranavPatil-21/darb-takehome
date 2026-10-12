@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import Link from 'next/link';
 import { resolveActor } from '@/lib/platform/identity';
 import { modulePath } from '@/lib/platform/module-config';
@@ -35,18 +36,18 @@ export default async function ExceptionsPage() {
   return (
     <Page>
       <PageHeader
-        title="Exceptions"
+        title={t('exceptions.title')}
         description={
           exceptions.length === 0
-            ? 'Nothing is stuck.'
+            ? t('exceptions.none')
             : `${exceptions.length} ${exceptions.length === 1 ? 'document is' : 'documents are'} stuck in a way that waiting will not resolve.`
         }
       />
 
       {exceptions.length === 0 ? (
         <EmptyState
-          title="Nothing stuck"
-          description="Every document either attached itself, is waiting on a charge to post, or is in the review queue."
+          title={t('exceptions.empty.title')}
+          description={t('exceptions.empty.body')}
         />
       ) : (
         <div>
@@ -62,7 +63,7 @@ export default async function ExceptionsPage() {
                   <li key={row.id} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3">
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm">
-                        {row.merchantName ?? 'Unreadable document'}
+                        {row.merchantName ?? t('common.unreadableDocument')}
                       </span>
                       <span className="mt-0.5 block text-xs text-muted-foreground">
                         {SOURCE_LABEL[row.source] ?? row.source} · {row.senderIdentifier} ·

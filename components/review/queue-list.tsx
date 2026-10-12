@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
 import { formatDay, formatMinorUnits } from '@/lib/format';
@@ -25,7 +26,7 @@ export interface QueueEntry {
 
 export function QueueList({ entries, focusedId }: { entries: QueueEntry[]; focusedId: number }) {
   return (
-    <nav aria-label="Documents waiting for review">
+    <nav aria-label={t('review.queue.aria')}>
       <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         Waiting · {entries.length}
       </h2>
@@ -51,7 +52,7 @@ export function QueueList({ entries, focusedId }: { entries: QueueEntry[]; focus
                     focused ? 'font-medium' : 'text-foreground/90',
                   )}
                 >
-                  {entry.merchantName ?? 'Unreadable receipt'}
+                  {entry.merchantName ?? t('common.unreadableReceipt')}
                 </span>
                 <span className="mt-0.5 block text-xs text-muted-foreground tabular-nums">
                   {formatMinorUnits(entry.totalAmount, entry.currency ?? 'SAR')} ·{' '}

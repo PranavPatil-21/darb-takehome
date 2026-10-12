@@ -1,3 +1,8 @@
+import { AGE_BUCKET_LABEL, TRANSACTION_STATUS } from '@/lib/platform/transaction-status';
+import { EXCEPTION_KIND_LABEL } from '@/lib/platform/document-register';
+import { ROLE_SUMMARY } from '@/lib/platform/identity';
+import { TRIGGER_COPY } from '@/lib/platform/verification';
+import { SOURCE_LABEL, presentStatus } from '@/lib/ui/vocabulary';
 import {
   configureMessages,
   DEFAULT_MESSAGES,
@@ -114,5 +119,56 @@ describe('the catalogue itself', () => {
         expect(token).toMatch(/^\{\w+\}$/);
       }
     }
+  });
+});
+
+/**
+ * The copy tables are getters, not snapshots.
+ *
+ * `TRANSACTION_STATUS`, `SOURCE_LABEL`, `TRIGGER_COPY` and friends read like plain
+ * objects, and the obvious implementation — building them once at module load — would
+ * silently freeze the default wording into the bundle. A host that called
+ * `configureMessages` would then see its overrides apply on some screens and not others,
+ * which is worse than not supporting overrides at all. These tests fail if any of those
+ * tables is ever rewritten as a literal.
+ */
+describe('host overrides reach the copy tables', () => {
+  afterEach(() => resetMessages());
+
+  it('reaches the charge status table', () => {
+    configureMessages({ 'chargeStatus.MISSING': 'No paperwork' });
+    expect(TRANSACTION_STATUS.MISSING.label).toBe('No paperwork');
+  });
+
+  it('reaches the ageing bands', () => {
+    configureMessages({ 'age.60+': 'Over two months' });
+    expect(AGE_BUCKET_LABEL['60+']).toBe('Over two months');
+  });
+
+  it('reaches the document status presenter', () => {
+    configureMessages({ 'docStatus.NEEDS_REVIEW': 'Your call' });
+    expect(presentStatus('NEEDS_REVIEW').label).toBe('Your call');
+    // The stance is a code decision and must survive a copy override untouched.
+    expect(presentStatus('NEEDS_REVIEW').stance).toBe('needs-you');
+  });
+
+  it('reaches the arrival channel labels', () => {
+    configureMessages({ 'source.WHATSAPP': 'From the driver' });
+    expect(SOURCE_LABEL.WHATSAPP).toBe('From the driver');
+  });
+
+  it('reaches the sign-off trigger labels', () => {
+    configureMessages({ 'trigger.MATERIAL': 'High value' });
+    expect(TRIGGER_COPY.MATERIAL).toBe('High value');
+  });
+
+  it('reaches the exception labels', () => {
+    configureMessages({ 'exception.UNREADABLE': 'Could not be read' });
+    expect(EXCEPTION_KIND_LABEL.UNREADABLE).toBe('Could not be read');
+  });
+
+  it('reaches the role summaries', () => {
+    configureMessages({ 'role.reviewer': 'Attaches receipts' });
+    expect(ROLE_SUMMARY.reviewer).toBe('Attaches receipts');
   });
 });

@@ -189,6 +189,14 @@ collapsing to a blank, and an unknown key renders as the key. Both are copy bugs
 should be visible the first time anybody looks at the screen — a sentence with a silently
 missing value reads as finished and says the wrong thing.
 
+The catalogue covers the whole surface, not the screens that were easy. That includes the
+copy tables — status labels, ageing bands, sign-off triggers, role summaries, exception
+kinds — which read like plain objects but are defined as getters so a host override reaches
+them. Building those tables once at module load would be the obvious implementation and the
+wrong one: overrides would apply on some screens and not others, which is worse than not
+supporting them. `__tests__/messages.test.ts` asserts an override reaches each table, and
+those assertions fail if any of them is rewritten as a literal.
+
 Not a dependency. A full i18n library brings locale negotiation, plural-rule tables, and
 date and currency formatting, all of which this already has or does not need for one
 locale. The point at which it earns its place is a language with richer plural categories

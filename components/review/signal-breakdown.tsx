@@ -1,4 +1,4 @@
-import { SIGNAL_COPY } from '@/lib/format';
+import { signalLabel, t } from '@/lib/content/messages';
 import type { SignalBreakdown } from '@/lib/domain/enums';
 
 const ORDER = ['amount', 'cardLast4', 'merchant', 'date'] as const;
@@ -24,7 +24,7 @@ export function SignalBreakdownView({ signals }: { signals: SignalBreakdown }) {
         const score = signals[key];
         return (
           <div key={key} className="contents">
-            <dt className="text-muted-foreground">{SIGNAL_COPY[key] ?? key}</dt>
+            <dt className="text-muted-foreground">{signalLabel(key)}</dt>
             <dd className="h-1.5 overflow-hidden rounded-full bg-muted">
               {score !== undefined ? (
                 <div
@@ -35,7 +35,7 @@ export function SignalBreakdownView({ signals }: { signals: SignalBreakdown }) {
             </dd>
             <dd className="text-right tabular-nums text-muted-foreground">
               {score === undefined ? (
-                <span title="This signal was not present on the document">n/a</span>
+                <span title={t('signal.na.hint')}>{t('signal.na')}</span>
               ) : (
                 `${Math.round(score * 100)}%`
               )}

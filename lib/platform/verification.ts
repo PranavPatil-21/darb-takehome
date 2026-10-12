@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import { moduleConfig } from '@/lib/platform/module-config';
 
 /**
@@ -63,7 +64,7 @@ export function decideVerification(input: VerificationInput): VerificationDecisi
     return {
       required: false,
       trigger: 'NOT_REQUIRED',
-      reason: 'Independent sign-off is not enabled.',
+      reason: t('verify.off'),
     };
   }
 
@@ -73,7 +74,7 @@ export function decideVerification(input: VerificationInput): VerificationDecisi
     return {
       required: true,
       trigger: 'MATERIAL',
-      reason: 'Above the materiality threshold.',
+      reason: t('verify.material'),
     };
   }
 
@@ -81,7 +82,7 @@ export function decideVerification(input: VerificationInput): VerificationDecisi
     return {
       required: true,
       trigger: 'AUTOMATIC',
-      reason: 'Attached automatically — no person has seen this yet.',
+      reason: t('verify.automatic'),
     };
   }
 
@@ -89,14 +90,14 @@ export function decideVerification(input: VerificationInput): VerificationDecisi
     return {
       required: true,
       trigger: 'SAMPLED',
-      reason: 'Selected by routine sampling.',
+      reason: t('verify.sampled'),
     };
   }
 
   return {
     required: false,
     trigger: 'NOT_REQUIRED',
-    reason: 'Below the threshold and not sampled.',
+    reason: t('verify.notRequired'),
   };
 }
 
@@ -115,7 +116,7 @@ export function canVerify(options: {
   if (options.makerId !== null && options.makerId === options.verifierId) {
     return {
       allowed: false,
-      reason: 'You attached this. Someone else has to sign it off.',
+      reason: t('verify.ownWork'),
     };
   }
 
@@ -123,8 +124,8 @@ export function canVerify(options: {
 }
 
 export const TRIGGER_COPY: Readonly<Record<VerificationTrigger, string>> = {
-  MATERIAL: 'Material value',
-  AUTOMATIC: 'Automatic match',
-  SAMPLED: 'Sampled',
-  NOT_REQUIRED: 'Not required',
+  get MATERIAL() { return t('trigger.MATERIAL'); },
+  get AUTOMATIC() { return t('trigger.AUTOMATIC'); },
+  get SAMPLED() { return t('trigger.SAMPLED'); },
+  get NOT_REQUIRED() { return t('trigger.NOT_REQUIRED'); },
 };

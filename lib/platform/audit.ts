@@ -105,13 +105,7 @@ export async function documentHistory(
   });
 }
 
-/** Human sentences for the trail. The audit view is read by people, not by machines. */
-export const ACTION_COPY: Readonly<Record<string, string>> = {
-  AUTO_MATCHED: 'Attached automatically by the matcher',
-  CONFIRMED: 'Attached by',
-  REJECTED: 'Rejected by',
-  VERIFIED: 'Signed off by',
-  OVERTURNED: 'Sent back by',
-};
+/** Human sentences for the trail, from the content layer. */
+export { auditText as actionCopy } from '@/lib/content/messages';
 
 export type { Prisma };

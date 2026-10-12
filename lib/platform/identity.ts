@@ -16,6 +16,8 @@
  * module stops being mountable.
  */
 
+import { roleSummary } from '@/lib/content/messages';
+
 /**
  * What a person may do inside this capability.
  *
@@ -89,11 +91,6 @@ export const DEVELOPMENT_CHECKER: Actor = {
   clientIds: null,
 };
 
-/** One line describing what each role is for, shown wherever the role is named. */
-export const ROLE_SUMMARY: Readonly<Record<string, string>> = {
-  reviewer: 'Attaches receipts to charges. Cannot sign off attachments.',
-  controller: 'Attaches receipts, signs off other people’s attachments, and sets thresholds.',
-};
 
 let hostResolver: (() => Promise<Actor>) | null = null;
 
@@ -173,3 +170,15 @@ export function clientScopeFilter(actor: Actor): { clientId?: { in: number[] } }
   if (actor.clientIds === null) return {};
   return { clientId: { in: [...actor.clientIds] } };
 }
+
+/**
+ * One line describing what each role is for, from the content layer.
+ *
+ * A capability list tells a person what the system will let them press. It does not tell
+ * them why the two roles exist, which is the question somebody meeting the module for the
+ * first time actually has.
+ */
+export const ROLE_SUMMARY: Readonly<Record<string, string>> = {
+  get reviewer() { return roleSummary('reviewer'); },
+  get controller() { return roleSummary('controller'); },
+};

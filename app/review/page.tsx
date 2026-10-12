@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import Link from 'next/link';
 import prisma from '@/lib/prisma';
 import { can, resolveActor } from '@/lib/platform/identity';
@@ -38,10 +39,10 @@ export default async function ReviewPage({
   if (!can(actor, 'decide')) {
     return (
       <Page>
-        <PageHeader title="Review queue" />
+        <PageHeader title={t('review.title')} />
         <EmptyState
-          title="This queue is not yours"
-          description="Attaching a receipt to a charge requires the decide permission. It is deliberately separate from the permission to sign off, so that the person who makes a decision is never the person who approves it."
+          title={t('review.denied.title')}
+          description={t('review.denied.body')}
           action={
             can(actor, 'verify') ? (
               <Link
@@ -74,10 +75,10 @@ export default async function ReviewPage({
   if (waiting.length === 0) {
     return (
       <Page>
-        <PageHeader title="Review queue" />
+        <PageHeader title={t('review.title')} />
         <EmptyState
-          title="Nothing waiting for you"
-          description="Every document either attached itself to a charge or is still waiting for one to post. Nothing here needs a decision."
+          title={t('review.empty.title')}
+          description={t('review.empty.body')}
           action={
             <Link href={modulePath()} className="text-sm underline underline-offset-4">
               Back to the overview
@@ -123,12 +124,8 @@ export default async function ReviewPage({
   return (
     <Page>
       <PageHeader
-        title="Review queue"
-        description={
-          waiting.length === 1
-            ? 'One document the matcher would not decide on its own.'
-            : `${waiting.length} documents the matcher would not decide on its own.`
-        }
+        title={t('review.title')}
+        description={t('review.subtitle', { count: waiting.length })}
       />
 
       <div className="grid gap-8 lg:grid-cols-[18rem_1fr]">

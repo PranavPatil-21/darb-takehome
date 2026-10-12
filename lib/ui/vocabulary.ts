@@ -1,4 +1,5 @@
 import type { DocumentStatus } from '@/lib/domain/enums';
+import { docStatusHint, docStatusLabel, sourceLabel } from '@/lib/content/messages';
 
 /**
  * The words an operator sees, as opposed to the words the pipeline uses.
@@ -32,12 +33,6 @@ export interface StatusPresentation {
   stance: DocumentStance;
 }
 
-const SETTLED: StatusPresentation = {
-  label: 'Attached',
-  hint: 'Attached to a charge.',
-  stance: 'settled',
-};
-
 /**
  * Only four of the six are ever worth showing.
  *
@@ -46,32 +41,39 @@ const SETTLED: StatusPresentation = {
  * died halfway, which the reader cannot act on — so both read as in-progress rather than
  * inventing a fifth idea for them to interpret.
  */
-export const STATUS_PRESENTATION: Readonly<Record<DocumentStatus, StatusPresentation>> = {
-  MATCHED: SETTLED,
-  NEEDS_REVIEW: {
-    label: 'Needs you',
-    hint: 'The matcher would not decide this on its own.',
-    stance: 'needs-you',
-  },
-  UNMATCHED: {
-    label: 'No charge yet',
-    hint: 'No charge to attach this to — it retries automatically when one posts.',
-    stance: 'waiting',
-  },
-  FAILED: {
-    label: "Couldn't read",
-    hint: 'Nothing usable came out of this document.',
-    stance: 'unreadable',
-  },
-  RECEIVED: { label: 'Processing', hint: 'Still being read.', stance: 'waiting' },
-  EXTRACTED: { label: 'Processing', hint: 'Read, now being matched.', stance: 'waiting' },
+
+/**
+ * Which of four stances a pipeline status represents.
+ *
+ * Only the stance lives here; the words come from the content layer. The six
+ * `DocumentStatus` values collapse to four because `RECEIVED` and `EXTRACTED` are moments
+ * inside one request nobody observes in a list, while `UNMATCHED` and `FAILED` stay
+ * distinct because they route to different people.
+ */
+const STANCE_FOR: Readonly<Record<DocumentStatus, DocumentStance>> = {
+  MATCHED: 'settled',
+  NEEDS_REVIEW: 'needs-you',
+  UNMATCHED: 'waiting',
+  FAILED: 'unreadable',
+  RECEIVED: 'waiting',
+  EXTRACTED: 'waiting',
 };
 
 export function presentStatus(status: string): StatusPresentation {
   // A status the application does not recognise is a data problem, not a reason to crash
   // a page or render a raw constant at someone.
-  return STATUS_PRESENTATION[status as DocumentStatus] ?? SETTLED;
+  return {
+    label: docStatusLabel(status),
+    hint: docStatusHint(status),
+    stance: STANCE_FOR[status as DocumentStatus] ?? 'settled',
+  };
 }
+
+/** How a document arrived, in the reader's words. */
+export const SOURCE_LABEL: Readonly<Record<string, string>> = {
+  get WHATSAPP() { return sourceLabel('WHATSAPP'); },
+  get EMAIL() { return sourceLabel('EMAIL'); },
+};
 
 /**
  * Tailwind classes per stance.
@@ -92,7 +94,3 @@ export const STANCE_TONE: Readonly<Record<DocumentStance, string>> = {
  * matters for context ("the driver sent this from his phone") but never drives a
  * decision, so it should not compete with the status badge for attention.
  */
-export const SOURCE_LABEL: Readonly<Record<string, string>> = {
-  WHATSAPP: 'WhatsApp',
-  EMAIL: 'Email',
-};

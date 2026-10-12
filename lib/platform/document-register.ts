@@ -2,6 +2,7 @@ import type { PrismaClient } from '@prisma/client';
 import prismaDefault from '@/lib/prisma';
 import { clientScopeFilter, type Actor } from '@/lib/platform/identity';
 import type { DocumentStatus } from '@/lib/domain/enums';
+import { exceptionAction, exceptionLabel } from '@/lib/content/messages';
 
 /**
  * The inbox side of the ledger: everything that arrived, whatever became of it.
@@ -186,18 +187,13 @@ export async function getExceptions(
       failureReason: d.failureReason,
       attachedTransactionId: d.confirmedForTransaction?.id ?? null,
       kind,
-      whatToDo:
-        kind === 'UNREADABLE'
-          ? 'Nothing usable was read. Ask the driver to send a clearer photo.'
-          : kind === 'UNKNOWN_SENDER'
-            ? 'Nobody has registered this sender, so the document cannot be scoped to a client. Register them and it will be matched automatically.'
-            : 'The best-matching charge already has a receipt. One of the two is wrong — decide which in the review queue.',
+      whatToDo: exceptionAction(kind),
     };
   });
 }
 
 export const EXCEPTION_KIND_LABEL: Readonly<Record<ExceptionRow['kind'], string>> = {
-  UNREADABLE: 'Could not be read',
-  UNKNOWN_SENDER: 'Sender not registered',
-  DUPLICATE_CLAIM: 'Charge already documented',
+  get UNREADABLE() { return exceptionLabel('UNREADABLE'); },
+  get UNKNOWN_SENDER() { return exceptionLabel('UNKNOWN_SENDER'); },
+  get DUPLICATE_CLAIM() { return exceptionLabel('DUPLICATE_CLAIM'); },
 };

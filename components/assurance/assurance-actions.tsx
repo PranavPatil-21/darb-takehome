@@ -1,5 +1,6 @@
 'use client';
 
+import { t } from '@/lib/content/messages';
 import { useState } from 'react';
 import { useAction } from 'next-safe-action/hooks';
 import { Check, Loader2, X } from 'lucide-react';
@@ -53,7 +54,7 @@ export function AssuranceActions({
             onChange={(event) => setReason(event.target.value)}
             rows={2}
             className="w-full rounded-md border bg-background p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            placeholder="The receipt is for the other Tamimi branch."
+            placeholder={t('assurance.overturn.placeholder')}
           />
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="ghost" onClick={() => setShowReason(false)} disabled={pending}>

@@ -1,5 +1,6 @@
 'use server';
 
+import { t } from '@/lib/content/messages';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 import prisma from '@/lib/prisma';
@@ -31,7 +32,7 @@ const upholdSchema = z.object({ matchId: z.number().int().positive() });
 const overturnSchema = z.object({
   matchId: z.number().int().positive(),
   // A detachment that nobody has to explain is a detachment nobody can review later.
-  reason: z.string().trim().min(3, 'Say why this attachment is wrong').max(500),
+  reason: z.string().trim().min(3, t('result.reasonTooShort')).max(500),
 });
 
 export interface AssuranceResult {
@@ -43,7 +44,7 @@ export interface AssuranceResult {
 async function requireChecker() {
   const actor = await resolveActor();
   if (!can(actor, 'verify')) {
-    throw new Error('You do not have permission to sign off attachments');
+    throw new Error(t('result.denied.verify'));
   }
   return actor;
 }
@@ -71,7 +72,7 @@ export const upholdAttachment = actionClient
 
       // Idempotent, like the review actions: a second click finds the work done.
       if (match.verifiedAt !== null) {
-        return { ok: true, effect: 'ALREADY_VERIFIED' as const, message: 'Already signed off.' };
+        return { ok: true, effect: 'ALREADY_VERIFIED' as const, message: t('result.alreadySignedOff') };
       }
 
       const permitted = canVerify({ verifierId: actor.id, makerId: match.decidedBy });
@@ -98,7 +99,7 @@ export const upholdAttachment = actionClient
         confidence: match.confidence,
       });
 
-      return { ok: true, effect: 'UPHELD' as const, message: 'Signed off.' };
+      return { ok: true, effect: 'UPHELD' as const, message: t('result.signedOff') };
     });
 
     revalidatePath(modulePath('assurance'));
@@ -128,7 +129,7 @@ export const overturnAttachment = actionClient
       if (!match) throw new Error(`Attachment ${parsedInput.matchId} no longer exists`);
 
       if (match.verifiedAt !== null) {
-        return { ok: true, effect: 'ALREADY_VERIFIED' as const, message: 'Already signed off.' };
+        return { ok: true, effect: 'ALREADY_VERIFIED' as const, message: t('result.alreadySignedOff') };
       }
 
       const permitted = canVerify({ verifierId: actor.id, makerId: match.decidedBy });
@@ -146,7 +147,7 @@ export const overturnAttachment = actionClient
         return {
           ok: false,
           effect: 'STALE' as const,
-          message: 'This attachment was already removed by someone else. Refresh to see the queue.',
+          message: t('result.alreadyRemoved'),
         };
       }
 
@@ -198,7 +199,7 @@ export const overturnAttachment = actionClient
       return {
         ok: true,
         effect: 'OVERTURNED' as const,
-        message: 'Detached. The charge is free for the correct receipt.',
+        message: t('result.detached'),
       };
     });
 

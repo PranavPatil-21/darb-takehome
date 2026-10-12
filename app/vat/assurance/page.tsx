@@ -1,3 +1,4 @@
+import { t } from '@/lib/content/messages';
 import Link from 'next/link';
 import { can, resolveActor } from '@/lib/platform/identity';
 import { moduleConfig, modulePath } from '@/lib/platform/module-config';
@@ -28,10 +29,10 @@ export default async function AssurancePage() {
   if (!can(actor, 'verify')) {
     return (
       <Page>
-        <PageHeader title="Assurance" />
+        <PageHeader title={t('assurance.title')} />
         <EmptyState
-          title="You cannot sign off attachments"
-          description="This queue needs the verify permission, which the host application grants."
+          title={t('assurance.denied.title')}
+          description={t('assurance.denied.body')}
         />
       </Page>
     );
@@ -40,10 +41,10 @@ export default async function AssurancePage() {
   if (config.makerChecker.mode === 'OFF') {
     return (
       <Page>
-        <PageHeader title="Assurance" />
+        <PageHeader title={t('assurance.title')} />
         <EmptyState
-          title="Independent sign-off is switched off"
-          description="Attachments stand on the decision of whoever made them. Set DARB_MAKER_CHECKER to POST_HOC and new attachments will be selected for review by value and by sampling."
+          title={t('assurance.off.title')}
+          description={t('assurance.off.body')}
         />
       </Page>
     );
@@ -58,22 +59,24 @@ export default async function AssurancePage() {
   return (
     <Page>
       <PageHeader
-        title="Assurance"
+        title={t('assurance.title')}
         description={
           queue.length === 0
-            ? 'Nothing is waiting on a second pair of eyes.'
-            : `${queue.length} ${queue.length === 1 ? 'attachment needs' : 'attachments need'} an independent sign-off, largest first. ${
+            ? t('assurance.none')
+            : `${t('assurance.subtitle', { count: queue.length })} ${
                 mine === 0
-                  ? 'None of them are yours, so you may sign off any.'
-                  : `${mine} ${mine === 1 ? 'is' : 'are'} your own and must go to a colleague.`
+                  ? t('assurance.mine.none')
+                  : t('assurance.mine.some', { count: mine })
               }`
         }
       />
 
       {queue.length === 0 ? (
         <EmptyState
-          title="All clear"
-          description={`Every attachment selected for review has been signed off. New ones appear here when they are above ${formatMinorUnits(config.makerChecker.materialityThreshold)}, attached automatically, or drawn by sampling.`}
+          title={t('assurance.empty.title')}
+          description={t('assurance.empty.body', {
+            threshold: formatMinorUnits(config.makerChecker.materialityThreshold),
+          })}
         />
       ) : (
         <ul className="space-y-4">

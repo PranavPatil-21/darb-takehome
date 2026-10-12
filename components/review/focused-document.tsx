@@ -1,4 +1,5 @@
-import { formatDay, formatMinorUnits, NEXT_STEP_COPY, REASON_COPY } from '@/lib/format';
+import { formatDay, formatMinorUnits } from '@/lib/format';
+import { nextStepText, reasonText, t } from '@/lib/content/messages';
 import { SOURCE_LABEL } from '@/lib/ui/vocabulary';
 import type { ComparableCharge } from '@/lib/ui/comparison';
 import { AmbiguityCallout } from '@/components/review/ambiguity-callout';
@@ -56,7 +57,7 @@ export function FocusedDocument({
     <article className="min-w-0">
       <header>
         <h2 className="text-xl font-semibold tracking-tight">
-          {document.merchantName ?? 'Unreadable receipt'}
+          {document.merchantName ?? t('common.unreadableReceipt')}
         </h2>
 
         <p className="mt-1 text-sm text-muted-foreground tabular-nums">
@@ -77,15 +78,15 @@ export function FocusedDocument({
         <p className="mt-0.5 text-xs text-muted-foreground">
           {document.vatNumber
             ? `VAT number ${document.vatNumber}`
-            : 'No VAT number on this document'}
+            : t('review.vat.absent')}
         </p>
       </header>
 
       {reason ? (
         <section className="mt-4 border-l-2 border-amber-400 pl-3">
-          <p className="text-sm font-medium">{REASON_COPY[reason] ?? reason}</p>
-          {NEXT_STEP_COPY[reason] ? (
-            <p className="mt-1 text-sm text-muted-foreground">{NEXT_STEP_COPY[reason]}</p>
+          <p className="text-sm font-medium">{reasonText(reason)}</p>
+          {nextStepText(reason) ? (
+            <p className="mt-1 text-sm text-muted-foreground">{nextStepText(reason)}</p>
           ) : null}
         </section>
       ) : null}
@@ -96,7 +97,7 @@ export function FocusedDocument({
 
       <section className="mt-6">
         <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {candidates.length === 1 ? 'The charge it would attach to' : 'Which charge is this?'}
+          {t(candidates.length === 1 ? 'review.candidates.one' : 'review.candidates.many')}
         </h3>
 
         {candidates.length === 0 ? (

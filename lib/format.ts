@@ -105,3 +105,23 @@ export const SIGNAL_COPY: Readonly<Record<string, string>> = {
   merchant: 'Merchant',
   date: 'Date',
 };
+
+/**
+ * What the reader should actually do, paired with each reason.
+ *
+ * `REASON_COPY` explains why the matcher stopped; on its own that leaves a reviewer
+ * correctly informed and still stuck. These are the next move — and in two cases the
+ * honest next move is "do not decide this from the screen", which an interface is
+ * reluctant to say and which is exactly when it matters most.
+ */
+export const NEXT_STEP_COPY: Readonly<Record<string, string>> = {
+  AMBIGUOUS_TOP_CANDIDATES:
+    'Check the paper receipt for the branch or the time, or ask the driver which purchase this was.',
+  TRANSACTION_ALREADY_DOCUMENTED:
+    'Compare this against the receipt already attached. Only one of them belongs to that charge.',
+  LOW_EXTRACTION_CONFIDENCE:
+    'Read the amount and card number off the receipt below and check they match the charge.',
+  WEAK_EVIDENCE:
+    'The receipt shows no total and no card number. Confirm only if you can tell from the receipt itself which charge this is.',
+  MID_CONFIDENCE: 'Check the difference flagged below, then attach it or reject it.',
+};

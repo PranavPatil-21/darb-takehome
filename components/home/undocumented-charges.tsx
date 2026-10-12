@@ -36,7 +36,7 @@ export function UndocumentedCharges({
             key={charge.id}
             className="flex items-baseline justify-between gap-4 py-2.5"
           >
-            <span className="truncate text-sm">{charge.merchantName}</span>
+            <span className="min-w-0 truncate text-sm">{charge.merchantName}</span>
 
             <span className="flex shrink-0 items-baseline gap-4 tabular-nums">
               <span className="text-sm">{formatMinorUnits(charge.amount, charge.currency)}</span>

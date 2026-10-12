@@ -106,7 +106,7 @@ export default async function ReviewPage({
       </header>
 
       <div className="grid gap-8 lg:grid-cols-[18rem_1fr]">
-        <aside className="lg:sticky lg:top-8 lg:self-start">
+        <aside className="min-w-0 lg:sticky lg:top-8 lg:self-start">
           <QueueList entries={waiting} focusedId={focusedId} />
         </aside>
 

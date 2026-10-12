@@ -64,11 +64,11 @@ export function DocumentLedger({
           {rows.map((row) => (
             <li key={row.id} className="py-3">
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                <span className="truncate text-sm">
+                <span className="min-w-0 truncate text-sm">
                   {row.merchantName ?? 'Unreadable document'}
                 </span>
 
-                <span className="flex items-center gap-3">
+                <span className="flex shrink-0 items-center gap-3">
                   <span className="text-sm tabular-nums text-muted-foreground">
                     {formatMinorUnits(row.totalAmount, row.currency ?? 'SAR')}
                   </span>

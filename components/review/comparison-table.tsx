@@ -37,8 +37,8 @@ export function ComparisonTable({
     <dl className="divide-y divide-border/60">
       {/* Column headings, stated once. Without them the two value columns are just two
           numbers and the reader has to infer which side is which — every single row. */}
-      <div className="grid grid-cols-[5.5rem_1fr_1fr] gap-x-3 pb-1.5 text-xs text-muted-foreground">
-        <span />
+      <div className="grid grid-cols-2 gap-x-3 pb-1.5 text-xs text-muted-foreground sm:grid-cols-[5.5rem_1fr_1fr]">
+        <span className="hidden sm:block" />
         <span>Receipt</span>
         <span>Charge</span>
       </div>
@@ -47,12 +47,21 @@ export function ComparisonTable({
         const missing = row.verdict === 'NOT_ON_DOCUMENT';
 
         return (
-          <div key={row.field} className="grid grid-cols-[5.5rem_1fr_1fr] gap-x-3 py-2">
-            <dt className="text-xs leading-6 text-muted-foreground">{row.label}</dt>
+          <div
+            key={row.field}
+            className="grid grid-cols-2 gap-x-3 py-2 sm:grid-cols-[5.5rem_1fr_1fr]"
+          >
+            {/* Below `sm` the label takes its own row: three columns inside a phone
+                viewport forces the two values into two or three lines each, which
+                destroys the baseline alignment that makes the diff readable at a
+                glance. */}
+            <dt className="col-span-2 text-xs leading-6 text-muted-foreground sm:col-span-1">
+              {row.label}
+            </dt>
 
             <dd
               className={cn(
-                'text-sm leading-6 tabular-nums',
+                'min-w-0 break-words text-sm leading-6 tabular-nums',
                 missing && 'text-muted-foreground italic',
               )}
             >
@@ -61,8 +70,8 @@ export function ComparisonTable({
                 : formatValue(row, row.documentValue)}
             </dd>
 
-            <dd className="flex items-baseline gap-2 text-sm leading-6 tabular-nums">
-              <span>{formatValue(row, row.chargeValue)}</span>
+            <dd className="flex min-w-0 items-baseline gap-2 text-sm leading-6 tabular-nums">
+              <span className="break-words">{formatValue(row, row.chargeValue)}</span>
               <span
                 aria-hidden
                 className={cn('text-xs leading-6', VERDICT_TONE[row.verdict])}
@@ -76,7 +85,7 @@ export function ComparisonTable({
                 already say. A note under every row would be noise and would train the
                 reader to skip the one row that matters. */}
             {row.note ? (
-              <p className="col-start-2 col-span-2 mt-0.5 text-xs text-muted-foreground">
+              <p className="col-span-2 mt-0.5 text-xs text-muted-foreground sm:col-start-2">
                 {row.note}
               </p>
             ) : null}

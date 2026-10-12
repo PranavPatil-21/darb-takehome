@@ -83,12 +83,12 @@ export function CandidateCard({
       )}
     >
       <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h4 className="flex items-baseline gap-2 text-base font-medium">
             {showRank ? (
               <span className="text-xs text-muted-foreground tabular-nums">{rank}</span>
             ) : null}
-            <span className="truncate">{candidate.merchantName}</span>
+            <span className="min-w-0 truncate">{candidate.merchantName}</span>
           </h4>
           <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
             {formatDay(candidate.transactionAt)} · {formatTime(candidate.transactionAt)} · card

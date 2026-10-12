@@ -23,7 +23,7 @@ export function RawTextPanel({ text, source }: { text: string | null; source: st
       <h3 className="text-xs font-medium text-muted-foreground">{heading}</h3>
       <pre
         dir="auto"
-        className="mt-1.5 max-h-56 overflow-auto rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap"
+        className="mt-1.5 max-h-56 overflow-auto rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"
       >
         {text}
       </pre>

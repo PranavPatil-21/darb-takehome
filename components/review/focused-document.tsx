@@ -48,7 +48,12 @@ export function FocusedDocument({
   }));
 
   return (
-    <article>
+    // `min-w-0` is load-bearing: this is a grid item, and a `1fr` track defaults to
+    // `min-width: auto` — the intrinsic width of its widest content. The monospace
+    // receipt block below therefore pushed the whole column past the viewport and the
+    // page scrolled sideways on a phone. Without this, no amount of wrapping inside the
+    // children fixes it.
+    <article className="min-w-0">
       <header>
         <h2 className="text-xl font-semibold tracking-tight">
           {document.merchantName ?? 'Unreadable receipt'}

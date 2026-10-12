@@ -104,6 +104,11 @@ export function moduleConfig(): ModuleConfig {
   return current;
 }
 
+/** True once a host (or the environment bootstrap) has configured anything. */
+export function isConfigured(): boolean {
+  return current !== DEFAULT_MODULE_CONFIG;
+}
+
 /** Builds a path inside the module, so no component hardcodes the mount point. */
 export function modulePath(...segments: string[]): string {
   const base = moduleConfig().basePath.replace(/\/$/, '');

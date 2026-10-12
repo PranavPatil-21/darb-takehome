@@ -314,6 +314,8 @@ async function main() {
     ],
   });
 
+  await seedOperatingHistory(rawabi.id, nujood.id);
+
   const [clients, identities, transactions] = await Promise.all([
     prisma.client.count(),
     prisma.senderIdentity.count(),
@@ -322,6 +324,147 @@ async function main() {
 
   console.log(
     `Seeded ${clients} clients, ${identities} sender identities, ${transactions} transactions.`,
+  );
+}
+
+/**
+ * A month of ordinary trading, behind the eleven scripted scenarios.
+ *
+ * The scripted fixtures exist to demonstrate specific engine behaviours and are
+ * deliberately few. They are not a population: with twenty-three charges every register
+ * reads as scaffolding, ageing has nothing to distribute across, the coverage figure moves
+ * by four percent per decision, and a filter that returns three rows cannot show whether
+ * filtering works.
+ *
+ * So this adds background volume: charges across both fleets spread over the period, a
+ * realistic share already documented, and the rest left open at varying ages. It is
+ * generated rather than written out because the point is the shape of the distribution,
+ * not any individual row — and it is fully deterministic, because a demo that looks
+ * different on every reset cannot be discussed.
+ *
+ * It touches nothing the scripted scenarios rely on: ids start well clear of them, and the
+ * merchants, cards and dates are chosen not to collide with the fixtures' matching.
+ */
+async function seedOperatingHistory(rawabiId: number, nujoodId: number): Promise<void> {
+  const MERCHANTS = [
+    'SASCO FUEL ST 12 RUH', 'PANDA HYPERMARKET BR 220', 'NAHDI PHARMACY 118',
+    'CARREFOUR HYPER RUH', 'DUNKIN DONUTS RUH 41', 'STARBUCKS KHOBAR 7',
+    'LULU HYPERMARKET DMM', 'AL OTHAIM MARKET 55', 'HERFY FOOD SERVICES',
+    'SAUDIA CATERING RUH', 'ABDUL LATIF JAMEEL', 'BUPA ARABIA CLINIC',
+    'MOBILY RECHARGE', 'STC PAY TOPUP', 'UBER TRIP RIYADH',
+    'JARIR MARKETING 09', 'IKEA RIYADH', 'ACE HARDWARE RUH',
+    'SAUDI POST PARCEL', 'ARAMEX DOMESTIC 02',
+  ];
+
+  // A linear congruential generator, seeded by hand. Deterministic across resets so the
+  // demo is the same every time and can be talked about; `Math.random()` would make every
+  // screenshot and every conversation about a number obsolete on the next seed.
+  let seed = 20250601;
+  const next = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+  const pick = <T,>(items: readonly T[]): T => items[Math.floor(next() * items.length)];
+
+  const fleets = [
+    { clientId: rawabiId, cards: ['4412', '8899', '1155', '5520'], drivers: ['966551234567', '966557778888', null, '966554440001'] },
+    { clientId: nujoodId, cards: ['7731', '6604'], drivers: ['966561112233', '966554440002'] },
+  ];
+
+  const rows: {
+    id: number; clientId: number; cardLast4: string; driverPhone: string | null;
+    merchantName: string; amount: number; transactionAt: Date;
+  }[] = [];
+
+  // Ids from 1000 so nothing can collide with the scripted charges or with the
+  // late-arriving transaction the demo script posts.
+  let id = 1000;
+
+  for (const fleet of fleets) {
+    for (let day = 1; day <= 28; day += 1) {
+      // Two to four charges a day per fleet — enough to populate a register without
+      // pretending a two-client demo is an enterprise.
+      const perDay = 2 + Math.floor(next() * 3);
+
+      for (let n = 0; n < perDay; n += 1) {
+        const cardIndex = Math.floor(next() * fleet.cards.length);
+        // Amounts are log-distributed: mostly small, occasionally large. A uniform spread
+        // would make the by-value status bar meaningless, since its whole point is that
+        // one large charge outweighs many small ones.
+        const magnitude = next();
+        const amount =
+          magnitude > 0.94
+            ? 50_000 + Math.floor(next() * 250_000)
+            : magnitude > 0.7
+              ? 8_000 + Math.floor(next() * 30_000)
+              : 1_500 + Math.floor(next() * 7_000);
+
+        rows.push({
+          id: id++,
+          clientId: fleet.clientId,
+          cardLast4: fleet.cards[cardIndex],
+          driverPhone: fleet.drivers[cardIndex],
+          merchantName: pick(MERCHANTS),
+          amount,
+          transactionAt: at(
+            `2025-06-${String(day).padStart(2, '0')}T${String(7 + Math.floor(next() * 12)).padStart(2, '0')}:${String(Math.floor(next() * 60)).padStart(2, '0')}:00Z`,
+          ),
+        });
+      }
+    }
+  }
+
+  await prisma.transaction.createMany({ data: rows });
+
+  // Roughly two thirds already have a receipt, which is what a fleet running this for a
+  // few months looks like. Documenting all of them would leave nothing to do on screen;
+  // documenting none would make the coverage figure read as a broken pipeline.
+  const documented = rows.filter(() => next() < 0.66);
+
+  for (const charge of documented) {
+    const document = await prisma.document.create({
+      data: {
+        source: next() < 0.75 ? 'WHATSAPP' : 'EMAIL',
+        externalId: `seed.${charge.id}`,
+        contentHash: `seed-hash-${charge.id}`,
+        senderIdentifier: charge.driverPhone ?? 'fleetops@rawabi-logistics.example',
+        clientId: charge.clientId,
+        driverPhone: charge.driverPhone,
+        status: 'MATCHED',
+        documentType: 'RECEIPT',
+        merchantName: charge.merchantName
+          .replace(/ (ST|BR|RUH|DMM)\b.*$/, '')
+          .replace(/\s+\d+$/, ''),
+        vatNumber: `3000000000${String(charge.id).padStart(5, '0')}`,
+        totalAmount: charge.amount,
+        currency: 'SAR',
+        documentDate: charge.transactionAt,
+        cardLast4: charge.cardLast4,
+        extractionConfidence: 0.9 + next() * 0.09,
+        receivedAt: charge.transactionAt,
+      },
+    });
+
+    await prisma.documentMatch.create({
+      data: {
+        documentId: document.id,
+        transactionId: charge.id,
+        confidence: 0.92 + next() * 0.07,
+        signals: JSON.stringify({ amount: 1, cardLast4: 1, merchant: 0.9, date: 1 }),
+        status: 'AUTO_CONFIRMED',
+        decidedBy: 'system',
+        decidedAt: charge.transactionAt,
+      },
+    });
+
+    await prisma.transaction.update({
+      where: { id: charge.id },
+      data: { confirmedDocumentId: document.id },
+    });
+  }
+
+  console.log(
+    `Seeded ${rows.length} background charges, ${documented.length} already documented.`,
   );
 }
 

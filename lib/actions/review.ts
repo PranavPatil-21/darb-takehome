@@ -6,7 +6,7 @@ import { Prisma } from '@prisma/client';
 import prisma from '@/lib/prisma';
 import { log } from '@/lib/logger';
 import { actionClient } from '@/lib/actions/safe-action-client';
-import { CONFIRMED_MATCH_STATUSES, TERMINAL_MATCH_STATUSES, type MatchStatus } from '@/lib/domain/enums';
+import { CONFIRMED_MATCH_STATUSES, decodeMatchStatus, TERMINAL_MATCH_STATUSES } from '@/lib/domain/enums';
 import { can, resolveActor } from '@/lib/platform/identity';
 import { recordEvent } from '@/lib/platform/audit';
 import { decideVerification } from '@/lib/platform/verification';
@@ -74,7 +74,7 @@ export const confirmMatch = actionClient
         if (!match) throw new Error(`Match ${matchId} no longer exists`);
 
         // Idempotency: a redelivered click finds the work already done.
-        if (TERMINAL_MATCH_STATUSES.includes(match.status as MatchStatus)) {
+        if (TERMINAL_MATCH_STATUSES.includes(decodeMatchStatus(match.status))) {
           const document = await tx.document.findUniqueOrThrow({
             where: { id: match.documentId },
             select: { status: true },
@@ -222,7 +222,7 @@ export const rejectMatch = actionClient
 
       // Detaching a confirmed match must release the transaction's slot, or the correct
       // document could never be attached afterwards.
-      if (CONFIRMED_MATCH_STATUSES.includes(match.status as MatchStatus)) {
+      if (CONFIRMED_MATCH_STATUSES.includes(decodeMatchStatus(match.status))) {
         await releaseConfirmedDocumentSlot(tx.transaction, match.transactionId, match.documentId);
       }
 

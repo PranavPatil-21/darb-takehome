@@ -1,8 +1,12 @@
 import type { Document, PrismaClient } from '@prisma/client';
 import prismaDefault from '@/lib/prisma';
 import { log } from '@/lib/logger';
-import type { DocumentSource, DocumentStatus } from '@/lib/domain/enums';
-import { documentTypeSchema } from '@/lib/domain/enums';
+import type { DocumentStatus } from '@/lib/domain/enums';
+import {
+  decodeDocumentSource,
+  decodeDocumentStatus,
+  documentTypeSchema,
+} from '@/lib/domain/enums';
 import { persistMatchResult } from '@/lib/services/document-ingestion';
 import { selectCandidateTransactions } from '@/lib/services/candidate-selection';
 import { matchDocument, type MatchableDocument } from '@/lib/services/transaction-matcher';
@@ -24,7 +28,7 @@ export function toMatchableDocument(document: Document): MatchableDocument {
   const parsedType = documentTypeSchema.safeParse(document.documentType);
 
   return {
-    source: document.source as DocumentSource,
+    source: decodeDocumentSource(document.source),
     clientId: document.clientId,
     driverPhone: document.driverPhone,
     documentType: parsedType.success ? parsedType.data : 'UNKNOWN',
@@ -66,8 +70,8 @@ export async function rematchDocument(
     if (!identity) {
       return {
         documentId,
-        previousStatus: document.status as DocumentStatus,
-        status: document.status as DocumentStatus,
+        previousStatus: decodeDocumentStatus(document.status),
+        status: decodeDocumentStatus(document.status),
         changed: false,
       };
     }
@@ -92,7 +96,7 @@ export async function rematchDocument(
   });
   const rejectedTransactionIds = rejected.map((row) => row.transactionId);
 
-  const previousStatus = document.status as DocumentStatus;
+  const previousStatus = decodeDocumentStatus(document.status);
   const matchable = toMatchableDocument(document);
   const candidates = await selectCandidateTransactions(
     prisma,

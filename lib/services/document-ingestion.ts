@@ -5,7 +5,13 @@ import { log } from '@/lib/logger';
 import { recordEvent } from '@/lib/platform/audit';
 import { decideVerification } from '@/lib/platform/verification';
 import { getExtractor } from '@/lib/extraction';
-import { encodeSignals, type DocumentSource, type DocumentStatus } from '@/lib/domain/enums';
+import {
+  decodeDocumentSource,
+  decodeDocumentStatus,
+  encodeSignals,
+  type DocumentSource,
+  type DocumentStatus,
+} from '@/lib/domain/enums';
 import { selectCandidateTransactions } from '@/lib/services/candidate-selection';
 import { claimConfirmedDocumentSlot } from '@/lib/services/slot-claim';
 import {
@@ -118,7 +124,7 @@ export async function ingestDocument(
     return {
       disposition: 'DUPLICATE',
       documentId: existing.id,
-      status: existing.status as DocumentStatus,
+      status: decodeDocumentStatus(existing.status),
       detail,
     };
   }
@@ -160,7 +166,7 @@ export async function ingestDocument(
         return {
           disposition: 'DUPLICATE',
           documentId: winner.id,
-          status: winner.status as DocumentStatus,
+          status: decodeDocumentStatus(winner.status),
           detail: 'Concurrent redelivery resolved by the unique constraint',
         };
       }
@@ -246,7 +252,7 @@ export async function processDocument(
     }
 
     const matchable: MatchableDocument = {
-      source: document.source as DocumentSource,
+      source: decodeDocumentSource(document.source),
       clientId: document.clientId,
       driverPhone: document.driverPhone,
       documentType: extracted.documentType,

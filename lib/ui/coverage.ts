@@ -114,39 +114,3 @@ export async function getCoveragePosition(
     period: periodOf(latest),
   };
 }
-
-export interface UndocumentedCharge {
-  id: number;
-  merchantName: string;
-  amount: number;
-  currency: string;
-  transactionAt: Date;
-  cardLast4: string;
-  driverPhone: string | null;
-}
-
-/**
- * The charges with no document, largest first.
- *
- * Ordered by value rather than date because this list is a worklist: chasing the single
- * largest missing receipt removes more exposure than chasing the most recent one.
- */
-export async function getUndocumentedCharges(
-  prisma: PrismaClient = prismaDefault,
-  limit = 50,
-): Promise<UndocumentedCharge[]> {
-  return prisma.transaction.findMany({
-    where: { confirmedDocumentId: null },
-    orderBy: [{ amount: 'desc' }, { transactionAt: 'desc' }],
-    take: limit,
-    select: {
-      id: true,
-      merchantName: true,
-      amount: true,
-      currency: true,
-      transactionAt: true,
-      cardLast4: true,
-      driverPhone: true,
-    },
-  });
-}

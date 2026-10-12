@@ -32,12 +32,6 @@ export function formatMinorUnits(amount: number | null, currency = 'SAR'): strin
   })} ${currency}`;
 }
 
-export function formatDate(value: Date | string | null): string {
-  const date = toDate(value);
-  if (!date) return '—';
-  return `${formatDay(date)} ${formatTime(date)}`;
-}
-
 /**
  * How long something has been waiting, as a duration rather than a point in time.
  *

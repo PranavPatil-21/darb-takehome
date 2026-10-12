@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { log } from '@/lib/logger';
 
 /**
  * Domain enums.
@@ -86,4 +87,53 @@ export function decodeSignals(raw: string): SignalBreakdown {
     // metadata, not a source of truth for the decision.
     return {};
   }
+}
+
+/* ========================================================================== */
+/* Decoding values that come back out of the database                          */
+/* ========================================================================== */
+
+/**
+ * SQLite has no enum type, so `status`, `source` and `signals` are `String` columns and
+ * Prisma types them as `string`. Every read therefore crosses a boundary where the
+ * application's union types are an assumption rather than a guarantee.
+ *
+ * Casting with `as DocumentStatus` states the assumption without checking it. These
+ * decoders check it, using the same Zod schemas the rest of the module defines — which is
+ * what makes "type safety is recovered at the boundary" a true statement rather than an
+ * aspiration.
+ *
+ * An unrecognised value is a data problem, not a reason to take a page down: a single bad
+ * row should not blank a register. So each decoder logs and falls back to the safest
+ * reading — the one that keeps the row visible and treats it as unsettled, never as
+ * settled, because silently promoting an unknown status to MATCHED would overstate the
+ * compliance position.
+ */
+
+function decode<T>(
+  schema: { safeParse: (v: unknown) => { success: boolean; data?: T } },
+  value: string,
+  fallback: T,
+  field: string,
+): T {
+  const parsed = schema.safeParse(value);
+  if (parsed.success && parsed.data !== undefined) return parsed.data;
+
+  log.warn('Unrecognised value read from the database', { field, value });
+  return fallback;
+}
+
+export function decodeDocumentStatus(value: string): DocumentStatus {
+  // UNMATCHED rather than MATCHED: an unknown status must never count as covered.
+  return decode(documentStatusSchema, value, 'UNMATCHED', 'Document.status');
+}
+
+export function decodeDocumentSource(value: string): DocumentSource {
+  return decode(documentSourceSchema, value, 'EMAIL', 'Document.source');
+}
+
+export function decodeMatchStatus(value: string): MatchStatus {
+  // CANDIDATE is the only safe default: it means "not decided", so an unreadable row
+  // surfaces for a human instead of silently holding or releasing a charge.
+  return decode(matchStatusSchema, value, 'CANDIDATE', 'DocumentMatch.status');
 }

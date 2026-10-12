@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import prismaDefault from '@/lib/prisma';
 import { log } from '@/lib/logger';
+import { recordEvent } from '@/lib/platform/audit';
 import { getExtractor } from '@/lib/extraction';
 import { encodeSignals, type DocumentSource, type DocumentStatus } from '@/lib/domain/enums';
 import { selectCandidateTransactions } from '@/lib/services/candidate-selection';
@@ -374,6 +375,19 @@ export async function persistMatchResult(
             where: { id: documentId },
             data: { status: 'MATCHED', failureReason: null },
           });
+
+          // The machine is the maker here. Recording it the same way a person's decision
+          // is recorded is what lets the audit view answer "who attached this" uniformly,
+          // and what makes an auto-match reviewable after the fact rather than invisible.
+          await recordEvent(tx.reviewEvent, {
+            documentId,
+            transactionId: winner.transactionId,
+            action: 'AUTO_MATCHED',
+            actorId: 'system',
+            actorRole: 'SYSTEM',
+            confidence: winner.confidence,
+          });
+
           return 'MATCHED' as DocumentStatus;
         }
 

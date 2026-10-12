@@ -1,0 +1,158 @@
+import { readFixtureFile } from '@/fixtures';
+import { MockExtractor, setExtractor } from '@/lib/extraction';
+import { ingestDocument } from '@/lib/services/document-ingestion';
+import { documentHistory, recordEvent } from '@/lib/platform/audit';
+import { resetDatabase, seedMinimalWorld, testPrisma } from './helpers/db';
+
+/**
+ * The audit trail.
+ *
+ * This is the evidence an auditor asks for eighteen months after the fact, so the tests
+ * are about properties rather than features: that a decision and its record cannot come
+ * apart, that the machine's decisions are evidenced the same way a person's are, and that
+ * the trail reads in the order things happened.
+ */
+
+beforeEach(async () => {
+  setExtractor(new MockExtractor());
+  await resetDatabase();
+  await seedMinimalWorld();
+});
+
+afterAll(async () => {
+  await testPrisma.$disconnect();
+});
+
+const ingest = (slug: string, overrides: Record<string, unknown> = {}) =>
+  ingestDocument(
+    {
+      source: 'WHATSAPP',
+      externalId: `wamid.${slug}`,
+      senderIdentifier: '966551234567',
+      bytes: readFixtureFile(slug),
+      mimeType: 'image/jpeg',
+      filename: `${slug}.jpg`,
+      receivedAt: new Date('2025-06-20T12:00:00Z'),
+      ...overrides,
+    },
+    testPrisma,
+  );
+
+describe('what the system does for itself', () => {
+  it('evidences an automatic attachment the same way it would a person', async () => {
+    // An auto-match is the machine acting as maker. If only human decisions were
+    // recorded, the majority of attachments in a working deployment would have no trail
+    // at all — and those are exactly the ones an auditor will sample.
+    const result = await ingest('whatsapp-alfanar-exact');
+    expect(result.status).toBe('MATCHED');
+
+    const history = await documentHistory(result.documentId, testPrisma);
+
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({
+      action: 'AUTO_MATCHED',
+      actorId: 'system',
+      actorRole: 'SYSTEM',
+    });
+  });
+
+  it('snapshots the confidence the decision was actually made on', async () => {
+    // Re-running the matcher later can produce a different number — thresholds move,
+    // merchant normalisation improves. The trail has to show what was on screen at the
+    // time, not what the engine would say today.
+    const result = await ingest('whatsapp-alfanar-exact');
+    const [event] = await documentHistory(result.documentId, testPrisma);
+
+    const match = await testPrisma.documentMatch.findFirstOrThrow({
+      where: { documentId: result.documentId },
+    });
+
+    expect(event.confidence).toBeCloseTo(match.confidence, 4);
+  });
+
+  it('records nothing for a document that attached to nothing', async () => {
+    const result = await ingest('whatsapp-orphan-receipt');
+    expect(result.status).toBe('UNMATCHED');
+
+    expect(await documentHistory(result.documentId, testPrisma)).toEqual([]);
+  });
+});
+
+describe('the trail as a narrative', () => {
+  it('reads oldest first, so it can be read as a sequence', async () => {
+    const result = await ingest('whatsapp-alfanar-exact');
+
+    await recordEvent(testPrisma.reviewEvent, {
+      documentId: result.documentId,
+      action: 'REJECTED',
+      actorId: 'faisal',
+      actorRole: 'MAKER',
+    });
+    await recordEvent(testPrisma.reviewEvent, {
+      documentId: result.documentId,
+      action: 'VERIFIED',
+      actorId: 'controller',
+      actorRole: 'CHECKER',
+      note: 'Checked against the paper receipt.',
+    });
+
+    const history = await documentHistory(result.documentId, testPrisma);
+
+    expect(history.map((e) => e.action)).toEqual(['AUTO_MATCHED', 'REJECTED', 'VERIFIED']);
+    expect(history[2].note).toBe('Checked against the paper receipt.');
+  });
+
+  it('keeps every event rather than replacing the previous one', async () => {
+    // DocumentMatch.decidedBy holds only the current decision and is overwritten. The
+    // whole reason this table exists is that a receipt attached, detached and re-attached
+    // has one match row and several events.
+    const result = await ingest('whatsapp-alfanar-exact');
+
+    for (const action of ['REJECTED', 'CONFIRMED', 'REJECTED'] as const) {
+      await recordEvent(testPrisma.reviewEvent, {
+        documentId: result.documentId,
+        action,
+        actorId: 'faisal',
+        actorRole: 'MAKER',
+      });
+    }
+
+    expect(await documentHistory(result.documentId, testPrisma)).toHaveLength(4);
+  });
+
+  it('separates one document’s history from another’s', async () => {
+    const a = await ingest('whatsapp-alfanar-exact');
+    const b = await ingest('whatsapp-petromin-generic', {
+      externalId: 'wamid.OTHER',
+    });
+
+    const historyA = await documentHistory(a.documentId, testPrisma);
+    const historyB = await documentHistory(b.documentId, testPrisma);
+
+    expect(historyA.every((e) => e.id !== historyB[0]?.id)).toBe(true);
+  });
+});
+
+describe('what the trail survives', () => {
+  it('outlives the charge it refers to', async () => {
+    // transactionId is deliberately not a foreign key. A charge may be purged under a
+    // retention policy long after the trail must still read sensibly, and an event that
+    // disappears with its transaction defeats the point of keeping one.
+    const result = await ingest('whatsapp-alfanar-exact');
+    const [event] = await documentHistory(result.documentId, testPrisma);
+    const transactionId = event.transactionId!;
+
+    expect(transactionId).not.toBeNull();
+
+    await testPrisma.transaction.update({
+      where: { id: transactionId },
+      data: { confirmedDocumentId: null },
+    });
+    await testPrisma.documentMatch.deleteMany({ where: { transactionId } });
+    await testPrisma.transaction.delete({ where: { id: transactionId } });
+
+    const after = await documentHistory(result.documentId, testPrisma);
+    expect(after).toHaveLength(1);
+    expect(after[0].transactionId).toBe(transactionId);
+  });
+});

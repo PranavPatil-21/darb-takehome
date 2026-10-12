@@ -119,6 +119,7 @@ model Document {
 
   matches                 DocumentMatch[]
   confirmedForTransaction Transaction?    @relation("ConfirmedDocument")
+  events                  ReviewEvent[]
 
   @@index([status])
 }
@@ -144,4 +145,47 @@ model DocumentMatch {
   @@unique([documentId, transactionId])
   @@index([documentId, confidence])
   @@index([transactionId])
+}
+
+/// Append-only record of every decision taken about a document.
+///
+/// The `decidedBy` / `decidedAt` columns on DocumentMatch hold the *current* decision and
+/// are overwritten when it changes, so they cannot answer the question an auditor actually
+/// asks — not "who owns this now" but "show me everything that happened to this receipt,
+/// in order, eighteen months later". A receipt that was auto-matched, rejected by one
+/// person, re-attached by another and signed off by a third has one row in DocumentMatch
+/// and four events here.
+///
+/// Nothing updates or deletes a row in this table. SQLite cannot express append-only, so
+/// that is a property of the code: `recordEvent` is the only write path.
+model ReviewEvent {
+  id         Int      @id @default(autoincrement())
+  documentId Int
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  /// The charge involved, when the event concerns one. Deliberately not a foreign key: a
+  /// charge may be purged under a retention policy long after the audit trail must still
+  /// read sensibly, and an event that vanishes with its transaction defeats the point.
+  transactionId Int?
+  /// The match row involved. Null for document-level events.
+  matchId       Int?
+
+  /// AUTO_MATCHED | CONFIRMED | REJECTED | VERIFIED | OVERTURNED
+  action     String
+  /// Actor id from the host identity, or 'system'.
+  actorId    String
+  /// SYSTEM | MAKER | CHECKER — which hat the actor was wearing.
+  actorRole  String
+  /// Confidence at the moment of the decision. Snapshotted because re-running the matcher
+  /// later can produce a different number, and the trail must show what the person was
+  /// actually looking at.
+  confidence Float?
+  /// Free text: an overturn reason, or a checker's note.
+  note       String?
+
+  createdAt DateTime @default(now())
+
+  @@index([documentId, createdAt])
+  @@index([transactionId])
+  @@index([actorId, createdAt])
 }

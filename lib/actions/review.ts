@@ -8,6 +8,7 @@ import { log } from '@/lib/logger';
 import { actionClient } from '@/lib/actions/safe-action-client';
 import { CONFIRMED_MATCH_STATUSES, TERMINAL_MATCH_STATUSES, type MatchStatus } from '@/lib/domain/enums';
 import { can, resolveActor } from '@/lib/platform/identity';
+import { recordEvent } from '@/lib/platform/audit';
 import {
   TransactionAlreadyDocumentedError,
   claimConfirmedDocumentSlot,
@@ -112,6 +113,19 @@ export const confirmMatch = actionClient
           data: { status: 'MATCHED', failureReason: null },
         });
 
+        // Written inside the same transaction as the decision, so the trail cannot
+        // disagree with the data. Recording it after the commit produces a system that
+        // occasionally attaches a receipt with no record of who did it — and the gap only
+        // ever surfaces under the one circumstance where it matters.
+        await recordEvent(tx.reviewEvent, {
+          documentId: match.documentId,
+          transactionId: match.transactionId,
+          matchId: match.id,
+          action: 'CONFIRMED',
+          actorId: actor.id,
+          actorRole: 'MAKER',
+        });
+
         return {
           ok: true,
           effect: 'CONFIRMED' as const,
@@ -192,6 +206,15 @@ export const rejectMatch = actionClient
       await tx.documentMatch.update({
         where: { id: matchId },
         data: { status: 'REJECTED', decidedBy: actor.id, decidedAt: new Date() },
+      });
+
+      await recordEvent(tx.reviewEvent, {
+        documentId: match.documentId,
+        transactionId: match.transactionId,
+        matchId: match.id,
+        action: 'REJECTED',
+        actorId: actor.id,
+        actorRole: 'MAKER',
       });
 
       const remaining = await tx.documentMatch.count({

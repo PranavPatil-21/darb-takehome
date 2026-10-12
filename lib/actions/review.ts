@@ -7,6 +7,7 @@ import prisma from '@/lib/prisma';
 import { log } from '@/lib/logger';
 import { actionClient } from '@/lib/actions/safe-action-client';
 import { CONFIRMED_MATCH_STATUSES, TERMINAL_MATCH_STATUSES, type MatchStatus } from '@/lib/domain/enums';
+import { can, resolveActor } from '@/lib/platform/identity';
 import {
   TransactionAlreadyDocumentedError,
   claimConfirmedDocumentSlot,
@@ -30,8 +31,15 @@ import {
 
 const matchIdSchema = z.object({ matchId: z.number().int().positive() });
 
-/** Who decided. In a real deployment this comes from the session, not a constant. */
-const REVIEWER = 'reviewer';
+/**
+ * Who decided.
+ *
+ * Resolved through the platform identity seam rather than read from a constant or a
+ * session here, so that mounting this capability inside a host application is a change to
+ * `lib/platform/identity.ts` and nowhere else. With no host mounted it resolves to the
+ * development identity, which is the same string this previously hardcoded — so the audit
+ * trail is unchanged until a real host supplies a real user.
+ */
 
 export interface ReviewActionResult {
   ok: boolean;
@@ -46,6 +54,13 @@ export const confirmMatch = actionClient
   .schema(matchIdSchema)
   .action(async ({ parsedInput }): Promise<ReviewActionResult> => {
     const { matchId } = parsedInput;
+    const actor = await resolveActor();
+
+    if (!can(actor, 'decide')) {
+      // Authorisation is checked on the write path, not only in the interface: a button
+      // that is not rendered is not a control.
+      throw new Error('You do not have permission to decide matches');
+    }
 
     const result = await prisma
       .$transaction(async (tx) => {
@@ -82,14 +97,14 @@ export const confirmMatch = actionClient
 
         await tx.documentMatch.update({
           where: { id: matchId },
-          data: { status: 'CONFIRMED', decidedBy: REVIEWER, decidedAt: new Date() },
+          data: { status: 'CONFIRMED', decidedBy: actor.id, decidedAt: new Date() },
         });
 
         // Confirming one candidate rules out its siblings on the same document: a
         // receipt documents one transaction.
         await tx.documentMatch.updateMany({
           where: { documentId: match.documentId, id: { not: matchId }, status: 'CANDIDATE' },
-          data: { status: 'REJECTED', decidedBy: REVIEWER, decidedAt: new Date() },
+          data: { status: 'REJECTED', decidedBy: actor.id, decidedAt: new Date() },
         });
 
         await tx.document.update({
@@ -137,6 +152,11 @@ export const rejectMatch = actionClient
   .schema(matchIdSchema)
   .action(async ({ parsedInput }): Promise<ReviewActionResult> => {
     const { matchId } = parsedInput;
+    const actor = await resolveActor();
+
+    if (!can(actor, 'decide')) {
+      throw new Error('You do not have permission to decide matches');
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const match = await tx.documentMatch.findUnique({
@@ -171,7 +191,7 @@ export const rejectMatch = actionClient
 
       await tx.documentMatch.update({
         where: { id: matchId },
-        data: { status: 'REJECTED', decidedBy: REVIEWER, decidedAt: new Date() },
+        data: { status: 'REJECTED', decidedBy: actor.id, decidedAt: new Date() },
       });
 
       const remaining = await tx.documentMatch.count({

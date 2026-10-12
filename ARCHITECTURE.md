@@ -219,6 +219,23 @@ anybody who opens a second terminal to check the project compiles. `next.config.
 
 ---
 
+### One dev server at a time
+
+The same reasoning extends to running two dev servers. When port 3000 is taken, Next does
+not stop — it moves to 3001 and keeps going, sharing the first server's `.next`. Two
+Turbopack processes writing one build directory corrupt each other, and the symptom is a
+500 on every route, including API routes that render no React at all. Nothing in that
+symptom points at the cause, so the time gets spent on the application instead.
+
+`scripts/check-dev-port.mjs` runs before `next dev` and refuses to start, naming the pid
+that holds the port. A second server is legitimate if it has its own build directory, so
+the override says exactly that: `NEXT_DIST_DIR=.next-alt PORT=3002 DARB_ALLOW_SECOND_DEV=1`.
+
+The same hazard applies to deleting `.next` under a running server — it does not recover,
+it 500s on everything. Stop the server first.
+
+---
+
 ## 8. What breaks first
 
 Honest list, in the order it would bite.

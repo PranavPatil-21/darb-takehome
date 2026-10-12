@@ -239,10 +239,26 @@ curl -X POST localhost:3000/api/webhooks/whatsapp \
 
 | Command | What it does |
 |---|---|
-| `npm run dev` | Dev server |
+| `npm run dev` | Dev server. Refuses to start a second one on a busy port — see below |
 | `npm run db:reset` | Push schema and reseed (safe while `npm run dev` is running) |
 | `npm run db:studio` | Prisma Studio |
 | `npm run webhooks:demo` | Fire all sample payloads at a running server |
 | `npm run payloads:generate` | Rebuild `fixtures/payloads/` from the fixture documents |
 | `npm test` | Jest |
 | `npm run typecheck` | `tsc --noEmit` |
+
+### If every route returns 500
+
+Two dev servers sharing one `.next` corrupt each other, and the symptom is a 500 on
+everything — including API routes that render no React. Next does not warn: when port 3000
+is busy it quietly moves to 3001 and reuses the same build directory. `npm run dev` now
+refuses to start in that situation and names the process holding the port.
+
+Deleting `.next` while a server is running produces the same symptom; the server does not
+recover. Stop it first.
+
+To run two servers deliberately, give the second its own build directory:
+
+```bash
+NEXT_DIST_DIR=.next-alt PORT=3002 DARB_ALLOW_SECOND_DEV=1 npm run dev
+```

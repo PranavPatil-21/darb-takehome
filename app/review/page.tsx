@@ -1,5 +1,8 @@
 import Link from 'next/link';
 import prisma from '@/lib/prisma';
+import { can, resolveActor } from '@/lib/platform/identity';
+import { modulePath } from '@/lib/platform/module-config';
+import { Page, PageHeader, EmptyState } from '@/components/shell/page';
 import { QueueList } from '@/components/review/queue-list';
 import { FocusedDocument } from '@/components/review/focused-document';
 import type { CandidateCharge } from '@/components/review/candidate-card';
@@ -26,6 +29,33 @@ export default async function ReviewPage({
   searchParams: Promise<{ doc?: string }>;
 }) {
   const { doc } = await searchParams;
+  const actor = await resolveActor();
+
+  // The queue is guarded, not merely hidden from the navigation. A checker reaching this
+  // URL directly would otherwise see a list of Attach buttons that every server action
+  // then refuses — which reads as a broken product rather than as a control, and teaches
+  // people that the permissions are decorative.
+  if (!can(actor, 'decide')) {
+    return (
+      <Page>
+        <PageHeader title="Review queue" />
+        <EmptyState
+          title="This queue is not yours"
+          description="Attaching a receipt to a charge requires the decide permission. It is deliberately separate from the permission to sign off, so that the person who makes a decision is never the person who approves it."
+          action={
+            can(actor, 'verify') ? (
+              <Link
+                href={modulePath('assurance')}
+                className="inline-flex h-9 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground"
+              >
+                Go to your queue
+              </Link>
+            ) : undefined
+          }
+        />
+      </Page>
+    );
+  }
 
   const waiting = await prisma.document.findMany({
     where: { status: 'NEEDS_REVIEW' },
@@ -43,22 +73,18 @@ export default async function ReviewPage({
 
   if (waiting.length === 0) {
     return (
-      <main className="mx-auto w-full max-w-5xl px-6 py-10">
-        <h1 className="text-xl font-semibold tracking-tight">Review queue</h1>
-        <div className="mt-8 rounded-lg border bg-card p-10 text-center">
-          <p className="font-medium">Nothing waiting for you</p>
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-            Every document either attached itself to a charge or is still waiting for one to
-            post. Nothing here needs a decision.
-          </p>
-          <Link
-            href="/"
-            className="mt-4 inline-block text-sm underline underline-offset-4 hover:no-underline"
-          >
-            Back to the overview
-          </Link>
-        </div>
-      </main>
+      <Page>
+        <PageHeader title="Review queue" />
+        <EmptyState
+          title="Nothing waiting for you"
+          description="Every document either attached itself to a charge or is still waiting for one to post. Nothing here needs a decision."
+          action={
+            <Link href={modulePath()} className="text-sm underline underline-offset-4">
+              Back to the overview
+            </Link>
+          }
+        />
+      </Page>
     );
   }
 
@@ -95,15 +121,15 @@ export default async function ReviewPage({
   }));
 
   return (
-    <main className="mx-auto w-full max-w-5xl px-6 py-10">
-      <header className="mb-8">
-        <h1 className="text-xl font-semibold tracking-tight">Review queue</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          {waiting.length === 1
+    <Page>
+      <PageHeader
+        title="Review queue"
+        description={
+          waiting.length === 1
             ? 'One document the matcher would not decide on its own.'
-            : `${waiting.length} documents the matcher would not decide on its own.`}
-        </p>
-      </header>
+            : `${waiting.length} documents the matcher would not decide on its own.`
+        }
+      />
 
       <div className="grid gap-8 lg:grid-cols-[18rem_1fr]">
         <aside className="min-w-0 lg:sticky lg:top-8 lg:self-start">
@@ -128,6 +154,6 @@ export default async function ReviewPage({
           candidates={candidates}
         />
       </div>
-    </main>
+    </Page>
   );
 }

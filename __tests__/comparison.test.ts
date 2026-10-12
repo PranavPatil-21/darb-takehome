@@ -1,6 +1,7 @@
 import {
   buildComparison,
   calendarDaysApart,
+  chargeDifferences,
   distinguishingFields,
   pointsOfDifference,
   type ComparableCharge,
@@ -8,6 +9,7 @@ import {
 } from '@/lib/ui/comparison';
 import { MAX_DATE_DRIFT_DAYS, VAT_ROUNDING_TOLERANCE_HALALAS } from '@/lib/matching/scoring-config';
 import { formatAge, formatDay, formatTime } from '@/lib/format';
+import { merchantSimilarity } from '@/lib/matching/merchant';
 
 /**
  * The document-versus-charge comparison shown to a reviewer.
@@ -253,5 +255,79 @@ describe('display primitives', () => {
       expect(formatDay(bad)).toBe('—');
       expect(formatTime(bad)).toBe('—');
     }
+  });
+});
+
+describe('describing what separates two charges', () => {
+  const charge = (over: Partial<ComparableCharge> = {}): ComparableCharge => ({
+    merchantName: 'TAMIMI MARKETS 0007 RUH',
+    amount: 4_500,
+    currency: 'SAR',
+    transactionAt: new Date('2025-06-17T12:10:00Z'),
+    cardLast4: '4412',
+    ...over,
+  });
+
+  it('calls two outlets of one chain a difference of branch', () => {
+    const [difference] = chargeDifferences(
+      charge(),
+      charge({ merchantName: 'TAMIMI MARKETS 0012 RUH' }),
+      merchantSimilarity,
+    );
+    expect(difference.phrase).toBe('the branch');
+  });
+
+  it('calls two unrelated shops a difference of merchant', () => {
+    // The bug this replaces: the phrase was looked up by field name, so `merchant` always
+    // rendered as "the branch". A reviewer told that Panda and Nahdi "differ only in the
+    // branch" has been actively misled on the one screen that exists to prevent a wrong
+    // attachment.
+    const [difference] = chargeDifferences(
+      charge({ merchantName: 'PANDA HYPERMARKET BR 220' }),
+      charge({ merchantName: 'NAHDI PHARMACY 118' }),
+      merchantSimilarity,
+    );
+    expect(difference.phrase).toBe('the merchant');
+  });
+
+  it('separates a difference of clock time from a difference of day', () => {
+    // Two charges forty minutes apart and two charges three days apart are resolved by
+    // completely different evidence, so they do not get the same sentence.
+    const sameDay = chargeDifferences(
+      charge(),
+      charge({ transactionAt: new Date('2025-06-17T12:55:00Z') }),
+      merchantSimilarity,
+    );
+    expect(sameDay[0].phrase).toBe('the time of day');
+
+    const otherDay = chargeDifferences(
+      charge(),
+      charge({ transactionAt: new Date('2025-06-20T12:10:00Z') }),
+      merchantSimilarity,
+    );
+    expect(otherDay[0].phrase).toBe('the date');
+  });
+
+  it('carries both values so the reader can see them, not just the field name', () => {
+    const [difference] = chargeDifferences(
+      charge(),
+      charge({ amount: 6_325 }),
+      merchantSimilarity,
+    );
+    expect(difference.left).toBe('45.00 SAR');
+    expect(difference.right).toBe('63.25 SAR');
+  });
+
+  it('returns nothing when the two charges are genuinely indistinguishable', () => {
+    expect(chargeDifferences(charge(), charge(), merchantSimilarity)).toEqual([]);
+  });
+
+  it('reports every difference when several apply', () => {
+    const differences = chargeDifferences(
+      charge(),
+      charge({ merchantName: 'NAHDI PHARMACY 118', amount: 9_000, cardLast4: '8899' }),
+      merchantSimilarity,
+    );
+    expect(differences.map((d) => d.field)).toEqual(['merchant', 'amount', 'card']);
   });
 });

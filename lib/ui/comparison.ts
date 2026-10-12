@@ -249,20 +249,106 @@ export function pointsOfDifference(rows: ComparisonRow[]): ComparisonRow[] {
 /**
  * What distinguishes two charges competing for the same document.
  *
- * When candidates tie on every signal — the same chain, the same amount, the same day —
- * the scores are identical by construction and the interface has nothing left to offer.
- * The honest move is to stop showing agreement and start showing the only fields on which
- * the two charges actually differ, so a reviewer can go and check that specific thing.
- * When this returns an empty list, nothing in the data separates them and the UI must say
- * so rather than invite a coin flip.
+ * When candidates tie on every signal, every bar reads 100% for both and the interface has
+ * nothing left to say with scores — it is showing agreement to someone whose problem is
+ * that everything agrees. The useful move is the opposite: name only what differs, so the
+ * reviewer knows the specific thing to check against the paper receipt.
+ *
+ * Each difference carries its own description, derived from the values rather than looked
+ * up by field name. That distinction is the whole point of this rewrite: the previous
+ * version mapped `merchant` to the fixed phrase "the branch", which is true for two
+ * outlets of one chain and false for two unrelated shops — and it rendered the same
+ * sentence for both. A reviewer told that Panda and Nahdi "differ only in the branch" has
+ * been actively misled on the screen whose entire job is preventing a wrong attachment.
+ *
+ * When this returns an empty list, nothing in the data separates the two charges, and the
+ * interface must say so rather than present a choice that is really a coin flip.
+ */
+
+export type DifferenceField = 'merchant' | 'amount' | 'card' | 'date' | 'time';
+
+export interface ChargeDifference {
+  field: DifferenceField;
+  /** A phrase that fits "they differ only in ___", accurate for these two values. */
+  phrase: string;
+  left: string;
+  right: string;
+}
+
+/** Same calendar day, in UTC terms — the engine's own notion of "same day". */
+function sameDay(a: Date, b: Date): boolean {
+  return Math.floor(a.getTime() / MS_PER_DAY) === Math.floor(b.getTime() / MS_PER_DAY);
+}
+
+export function chargeDifferences(
+  a: ComparableCharge,
+  b: ComparableCharge,
+  /**
+   * How alike the two merchant names are, 0..1. Injected rather than imported so this
+   * module stays free of the matching engine — the caller passes `merchantSimilarity`,
+   * which is the same function the matcher scores with, so the UI and the engine agree
+   * about what "the same chain" means.
+   */
+  merchantAlikeness: (left: string, right: string) => number,
+): ChargeDifference[] {
+  const differences: ChargeDifference[] = [];
+
+  if (a.merchantName.trim() !== b.merchantName.trim()) {
+    // Two outlets of one chain and two unrelated shops are different problems and need
+    // different sentences. The threshold is deliberately generous: a reviewer reading
+    // "the branch" must be able to trust it, so anything short of clearly-the-same-name
+    // is described as a different merchant.
+    const alike = merchantAlikeness(a.merchantName, b.merchantName) >= 0.6;
+    differences.push({
+      field: 'merchant',
+      phrase: alike ? 'the branch' : 'the merchant',
+      left: a.merchantName,
+      right: b.merchantName,
+    });
+  }
+
+  if (a.amount !== b.amount) {
+    differences.push({
+      field: 'amount',
+      phrase: 'the amount',
+      left: money(a.amount, a.currency),
+      right: money(b.amount, b.currency),
+    });
+  }
+
+  if (a.cardLast4 !== b.cardLast4) {
+    differences.push({
+      field: 'card',
+      phrase: 'the card',
+      left: `•••• ${a.cardLast4}`,
+      right: `•••• ${b.cardLast4}`,
+    });
+  }
+
+  if (a.transactionAt.getTime() !== b.transactionAt.getTime()) {
+    // Two charges minutes apart and two charges a week apart are told apart by completely
+    // different evidence, so they do not get the same sentence either.
+    const within = sameDay(a.transactionAt, b.transactionAt);
+    differences.push({
+      field: within ? 'time' : 'date',
+      phrase: within ? 'the time of day' : 'the date',
+      left: a.transactionAt.toISOString(),
+      right: b.transactionAt.toISOString(),
+    });
+  }
+
+  return differences;
+}
+
+/**
+ * The field names alone, kept for callers that only need to know *whether* anything
+ * separates two charges.
  */
 export function distinguishingFields(a: ComparableCharge, b: ComparableCharge): string[] {
   const differences: string[] = [];
-
   if (a.merchantName.trim() !== b.merchantName.trim()) differences.push('merchant');
   if (a.amount !== b.amount) differences.push('amount');
   if (a.cardLast4 !== b.cardLast4) differences.push('card');
   if (a.transactionAt.getTime() !== b.transactionAt.getTime()) differences.push('time');
-
   return differences;
 }

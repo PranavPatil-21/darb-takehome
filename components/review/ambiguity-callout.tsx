@@ -1,5 +1,6 @@
 import { formatDay, formatMinorUnits, formatTime } from '@/lib/format';
-import { distinguishingFields, type ComparableCharge } from '@/lib/ui/comparison';
+import { merchantSimilarity } from '@/lib/matching/merchant';
+import { chargeDifferences, type ComparableCharge } from '@/lib/ui/comparison';
 
 /**
  * The hardest case in the product, stated honestly.
@@ -16,13 +17,6 @@ import { distinguishingFields, type ComparableCharge } from '@/lib/ui/comparison
  * then looks reviewed.
  */
 
-const FIELD_PHRASE: Record<string, string> = {
-  merchant: 'the branch',
-  amount: 'the amount',
-  card: 'the card',
-  time: 'the time of day',
-};
-
 function list(parts: string[]): string {
   if (parts.length <= 1) return parts[0] ?? '';
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
@@ -32,7 +26,12 @@ export function AmbiguityCallout({ charges }: { charges: ComparableCharge[] }) {
   if (charges.length < 2) return null;
 
   const [a, b] = charges;
-  const fields = distinguishingFields(a, b);
+  // Each difference describes itself from the actual values. The phrase is not looked up
+  // by field name: two outlets of one chain differ by "the branch", two unrelated shops by
+  // "the merchant", and telling a reviewer the wrong one on this screen is the failure the
+  // screen exists to prevent. `merchantSimilarity` is the same function the matcher scores
+  // with, so the sentence and the engine agree about what counts as the same chain.
+  const differences = chargeDifferences(a, b, merchantSimilarity);
 
   return (
     <section className="mt-4 rounded-md border border-amber-300/60 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-950/40">
@@ -40,7 +39,7 @@ export function AmbiguityCallout({ charges }: { charges: ComparableCharge[] }) {
         These charges are equally good matches
       </h3>
 
-      {fields.length === 0 ? (
+      {differences.length === 0 ? (
         <p className="mt-1.5 text-sm text-amber-900/90 dark:text-amber-200/90">
           Nothing in either charge separates them. The receipt cannot decide this — rejecting
           both and asking the driver which purchase it was is safer than guessing.
@@ -49,8 +48,8 @@ export function AmbiguityCallout({ charges }: { charges: ComparableCharge[] }) {
         <>
           <p className="mt-1.5 text-sm text-amber-900/90 dark:text-amber-200/90">
             Everything the receipt can be compared on is identical. They differ only in{' '}
-            {list(fields.map((f) => FIELD_PHRASE[f] ?? f))} — check the paper receipt for that,
-            not the figures below.
+            {list(differences.map((d) => d.phrase))} — check the paper receipt for that, not
+            the figures below.
           </p>
 
           <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">

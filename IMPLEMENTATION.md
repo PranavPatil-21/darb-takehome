@@ -442,21 +442,26 @@ rebuilt UI.
 
 ## 5. Testing
 
-**233 tests across 11 suites.** Distribution follows the brief's instruction to put most
-effort into the matcher — 98 of the 233 tests exercise the matching engine alone.
+**285 tests across 16 suites.** Distribution follows the brief's instruction to put most
+effort into the matcher — 98 of the 285 tests exercise the matching engine alone.
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `transaction-matcher` | 33 | All six brief edge cases, vetoes, purity, determinism |
-| `matcher-edge-cases` | 65 | Every threshold probed on both sides of its edge |
-| `comparison` | 26 | The document-vs-charge diff a reviewer decides from |
+| `matcher-edge-cases` | 65 | Every scoring threshold probed on both sides of its edge |
+| `transaction-matcher` | 33 | All six of the brief's edge cases, vetoes, purity, determinism |
+| `comparison` | 32 | The document-vs-charge diff, and what separates two tied charges |
 | `webhooks` | 21 | 400 on malformed, never 500, HMAC, production fails closed |
 | `document-ingestion` | 19 | Idempotency incl. concurrent, failure isolation, scoping |
 | `merchant` | 18 | Normalisation and similarity on real acquirer strings |
-| `rematch` | 12 | Late arrivals, rejections are permanent, late sender registration |
+| `transaction-status` | 13 | Derived documentation status, precedence, ageing |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
+| `rematch` | 12 | Late arrivals, rejections are permanent, late sender registration |
 | `coverage` | 12 | Receipt coverage and the 15/115 VAT extraction |
+| `verification` | 12 | Maker-checker selection policy and segregation of duties |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
+| `identity` | 9 | The host seam, capabilities and tenant scoping |
+| `audit` | 7 | The append-only trail and what it survives |
+| `enums` | 5 | Decoding untrusted values at the persistence boundary |
 | `fixtures` | 4 | The demo catalogue's own invariants |
 
 Three deliberate choices:

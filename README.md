@@ -86,7 +86,7 @@ Client, including the malformed payloads that return `400`.
 ## Tests
 
 ```bash
-npm test           # 233 tests, 11 suites
+npm test           # 285 tests, 16 suites
 npm run typecheck  # tsc --noEmit, strict
 npm run build      # production build
 ```
@@ -95,17 +95,32 @@ Integration tests create their own throwaway `prisma/test.db`; they do not touch
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `transaction-matcher` | 33 | All six brief edge cases, vetoes, purity, determinism |
-| `matcher-edge-cases` | 65 | Every threshold probed on both sides of its edge |
-| `comparison` | 26 | The document-vs-charge diff a reviewer decides from |
+| `matcher-edge-cases` | 65 | Every scoring threshold probed on both sides of its edge |
+| `transaction-matcher` | 33 | All six of the brief's edge cases, vetoes, purity, determinism |
+| `comparison` | 32 | The document-vs-charge diff, and what separates two tied charges |
 | `webhooks` | 21 | 400 on malformed, never 500, HMAC, production fails closed |
 | `document-ingestion` | 19 | Idempotency incl. concurrent, failure isolation, scoping |
 | `merchant` | 18 | Normalisation and similarity on real acquirer strings |
-| `rematch` | 12 | Late arrivals, rejections are permanent, late sender registration |
+| `transaction-status` | 13 | Derived documentation status, precedence, ageing |
 | `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
+| `rematch` | 12 | Late arrivals, rejections are permanent, late sender registration |
 | `coverage` | 12 | Receipt coverage and the 15/115 VAT extraction |
+| `verification` | 12 | Maker-checker selection policy and segregation of duties |
 | `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
+| `identity` | 9 | The host seam, capabilities and tenant scoping |
+| `audit` | 7 | The append-only trail and what it survives |
+| `enums` | 5 | Decoding untrusted values at the persistence boundary |
 | `fixtures` | 4 | The demo catalogue's own invariants |
+
+---
+
+## Documents
+
+| File | What it covers |
+|---|---|
+| `IMPLEMENTATION.md` | The matching engine, the pipeline, scoring design, deviations from the brief |
+| `ARCHITECTURE.md` | Layering, the host boundary, data-model decisions, scaling limits, reversed decisions |
+| `requirements.md` | The original brief, kept in the repository for reference |
 
 ---
 

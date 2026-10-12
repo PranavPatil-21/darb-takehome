@@ -4,6 +4,7 @@ import { clientScopeFilter, type Actor } from '@/lib/platform/identity';
 import { vatWithin, periodOf } from '@/lib/ui/coverage';
 import {
   ageBucket,
+  ageingReference,
   daysUndocumented,
   documentationStatusOf,
   type AgeBucket,
@@ -62,20 +63,6 @@ export interface DashboardData {
 
   /** The oldest thing still waiting on a human, in days. */
   oldestWaitingDays: number | null;
-}
-
-/**
- * The date ageing is measured against.
- *
- * For a period still open that is today. For one already closed it is the period's last
- * day — because the question a controller asks about a finished month is how long each
- * charge went undocumented *within it*, not how many months have passed since. Measuring
- * a June period against today's date puts every charge in the oldest bucket and the
- * ageing table stops saying anything at all.
- */
-export function ageingReference(periodEnd: Date | null, now: Date): Date {
-  if (periodEnd === null) return now;
-  return periodEnd < now ? periodEnd : now;
 }
 
 export async function getDashboard(

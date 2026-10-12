@@ -138,3 +138,20 @@ export const AGE_BUCKET_LABEL: Readonly<Record<AgeBucket, string>> = {
   '31-60': '1 to 2 months',
   '60+': 'Over 2 months',
 };
+
+/**
+ * The date ageing is measured against, given the period under review.
+ *
+ * For a period still open that is today. For one already closed it is the period's last
+ * day, because the question about a finished month is how long each charge went
+ * undocumented *within it* — not how many months have elapsed since. Measuring a June
+ * period against today puts every charge in the oldest bucket and the ageing stops saying
+ * anything.
+ *
+ * Lives here rather than on either screen so the overview and the register cannot report
+ * different ages for the same charge.
+ */
+export function ageingReference(periodEnd: Date | null, now: Date): Date {
+  if (periodEnd === null) return now;
+  return periodEnd < now ? periodEnd : now;
+}

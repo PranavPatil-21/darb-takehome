@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { formatMinorUnits, formatPercent } from '@/lib/format';
 import { modulePath } from '@/lib/platform/module-config';
 import type { DashboardData } from '@/lib/platform/dashboard';
+import { can, type Actor } from '@/lib/platform/identity';
 
 /**
  * The headline: how exposed is this period, and whose desk is the work on.
@@ -12,7 +13,7 @@ import type { DashboardData } from '@/lib/platform/dashboard';
  * it. The two desks beneath are routes into work, not statistics — they are counts
  * precisely because a person has to go and do them.
  */
-export function ExposureSummary({ data }: { data: DashboardData }) {
+export function ExposureSummary({ data, actor }: { data: DashboardData; actor: Actor }) {
   const { period, undocumentedSpend, undocumentedCount, chargeCount } = {
     ...data,
     undocumentedCount: data.byStatus
@@ -54,20 +55,29 @@ export function ExposureSummary({ data }: { data: DashboardData }) {
         </>
       )}
 
+      {/* A doorway only appears for work this reader can actually do. Offering a
+          reviewer "96 attachments need sign-off" sends them to a screen that refuses
+          them, and a dashboard that hands out work the reader is not permitted to pick up
+          teaches them to distrust the rest of it. */}
       <div className="mt-5 flex flex-wrap items-center gap-3">
-        <Desk
-          href={modulePath('review')}
-          count={data.awaitingDecision}
-          singular="document needs a decision"
-          plural="documents need a decision"
-          primary
-        />
-        <Desk
-          href={modulePath('assurance')}
-          count={data.awaitingVerification}
-          singular="attachment needs sign-off"
-          plural="attachments need sign-off"
-        />
+        {can(actor, 'decide') ? (
+          <Desk
+            href={modulePath('review')}
+            count={data.awaitingDecision}
+            singular="document needs a decision"
+            plural="documents need a decision"
+            primary
+          />
+        ) : null}
+        {can(actor, 'verify') ? (
+          <Desk
+            href={modulePath('assurance')}
+            count={data.awaitingVerification}
+            singular="attachment needs sign-off"
+            plural="attachments need sign-off"
+            primary={!can(actor, 'decide')}
+          />
+        ) : null}
         <Desk
           href={modulePath('exceptions')}
           count={data.exceptions}

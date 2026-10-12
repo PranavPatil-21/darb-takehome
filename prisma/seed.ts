@@ -445,15 +445,38 @@ async function seedOperatingHistory(rawabiId: number, nujoodId: number): Promise
       },
     });
 
+    // Most attachments are the engine's. A minority were made by a person, because the
+    // segregation-of-duties rule is invisible unless some attachment actually has a human
+    // maker: with every row attributed to 'system', nobody is ever the maker of anything,
+    // `canVerify` never refuses, and switching between the two roles shows no difference
+    // at all. A handful are attributed to the controller specifically, so her own
+    // assurance queue contains work she is not allowed to sign off.
+    const draw = next();
+    const maker =
+      draw < 0.08 ? 'controller' : draw < 0.22 ? 'reviewer' : 'system';
+    const automatic = maker === 'system';
+
     await prisma.documentMatch.create({
       data: {
         documentId: document.id,
         transactionId: charge.id,
         confidence: 0.92 + next() * 0.07,
         signals: JSON.stringify({ amount: 1, cardLast4: 1, merchant: 0.9, date: 1 }),
-        status: 'AUTO_CONFIRMED',
-        decidedBy: 'system',
+        status: automatic ? 'AUTO_CONFIRMED' : 'CONFIRMED',
+        decidedBy: maker,
         decidedAt: charge.transactionAt,
+        // The same policy the running system applies: material value always, automatic
+        // attachments always, and a sample of the rest.
+        verificationRequired:
+          charge.amount >= 100_000 || automatic || next() < 0.1,
+        verificationTrigger:
+          charge.amount >= 100_000 ? 'MATERIAL' : automatic ? 'AUTOMATIC' : 'SAMPLED',
+        verificationReason:
+          charge.amount >= 100_000
+            ? 'Above the materiality threshold.'
+            : automatic
+              ? 'Attached automatically — no person has seen this yet.'
+              : 'Selected by routine sampling.',
       },
     });
 

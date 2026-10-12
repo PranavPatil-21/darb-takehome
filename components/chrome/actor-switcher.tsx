@@ -1,5 +1,10 @@
 import { switchDevActor } from '@/lib/actions/dev-actor';
-import { DEVELOPMENT_ACTOR, DEVELOPMENT_CHECKER, type Actor } from '@/lib/platform/identity';
+import {
+  DEVELOPMENT_ACTOR,
+  DEVELOPMENT_CHECKER,
+  ROLE_SUMMARY,
+  type Actor,
+} from '@/lib/platform/identity';
 
 /**
  * Who you are, in development.
@@ -13,7 +18,12 @@ import { DEVELOPMENT_ACTOR, DEVELOPMENT_CHECKER, type Actor } from '@/lib/platfo
  */
 export function ActorSwitcher({ actor }: { actor: Actor }) {
   return (
-    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      {/* The role's job, stated rather than implied. Two names in a corner tell a reader
+          nothing; the difference between them is the whole point of there being two. */}
+      <span className="order-last w-full sm:order-none sm:w-auto sm:max-w-sm sm:text-right">
+        {ROLE_SUMMARY[actor.id]}
+      </span>
       <span className="hidden sm:inline">Acting as</span>
       {[DEVELOPMENT_ACTOR, DEVELOPMENT_CHECKER].map((candidate) => {
         const active = candidate.id === actor.id;

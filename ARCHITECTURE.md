@@ -121,12 +121,31 @@ than to write `confirmedDocumentId = null`, for exactly this reason.
 
 Recording these because the reasoning matters more than the outcome.
 
-**Segregation by role → segregation by item.** The two identities first held disjoint
-capabilities: one could attach, the other sign off. That is stricter than the control
-requires — the person accountable for the filing could not do the product's main job — and
-weaker than it looks, because it invites the belief that the capability check *is* the
-control. The only thing preventing self-approval is `canVerify` comparing two identities
-on one attachment. Both identities now hold both powers; the rule is per item.
+**The role model, twice.** It first held *disjoint* capabilities — one identity could
+attach, the other sign off. That made the person accountable for the filing unable to do
+the product's main job, and implied the capability check was the control. Correcting that,
+both identities were given *identical* powers — which fixed the hierarchy and destroyed the
+distinction, since switching role then changed nothing anybody could see.
+
+The shape that is true of a finance team is a **superset**: a clerk works the queue; a
+controller works the same queue *and* signs off other people's attachments *and* sets
+thresholds. Two mechanisms then do separate jobs, which is why both exist:
+
+| Mechanism | Answers |
+|---|---|
+| Capabilities (`decide`, `verify`, `configure`) | what kind of work this person does at all |
+| `canVerify`, per attachment | whether *this* person may sign off *this* item |
+
+Neither substitutes for the other. Holding `verify` lets a controller sign off colleagues'
+work; it never lets her approve her own. The interface has to make that visible or the
+control is only a claim — so own attachments appear in the assurance queue greyed with
+"you attached this" rather than filtered away, the header states how many of the waiting
+items are the reader's own, and the dashboard offers a work doorway only for work the
+reader can actually pick up.
+
+The seed deliberately attributes a minority of attachments to each human identity. With
+everything attributed to `system`, nobody is ever a maker, `canVerify` never refuses, and
+the rule is invisible no matter how correct the code is.
 
 **Blocking maker-checker → post-hoc, risk-based.** A gate in front of every attachment
 puts a human round-trip in front of money already spent and doubles the length of the only

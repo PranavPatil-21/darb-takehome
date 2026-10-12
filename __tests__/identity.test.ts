@@ -7,8 +7,10 @@ import {
   resetActorResolver,
   resolveActor,
   setActorResolver,
+  ROLE_SUMMARY,
   type Actor,
 } from '@/lib/platform/identity';
+import { canVerify } from '@/lib/platform/verification';
 
 /**
  * The seam between this capability and whatever application mounts it.
@@ -42,25 +44,41 @@ describe('resolving the actor', () => {
     expect(await resolveActor()).toEqual(hostUser);
   });
 
-  it('gives both development identities the same powers', async () => {
-    // Deliberately the same, and the previous asymmetry was the bug. Segregation of
-    // duties is a property of an item, not of a person: a controller attaches receipts all
-    // day and signs off colleagues' work, and may only never approve something they
-    // themselves decided. Splitting it into two roles made the person accountable for the
-    // filing unable to do the product's main job, and invited the belief that the
-    // capability check was the control — when the only thing preventing self-approval is
-    // `canVerify` comparing two identities on one attachment.
-    for (const actor of [DEVELOPMENT_ACTOR, DEVELOPMENT_CHECKER]) {
-      expect(can(actor, 'decide')).toBe(true);
-      expect(can(actor, 'verify')).toBe(true);
+  it('makes the controller a superset of the reviewer, not a different half', async () => {
+    // Two earlier shapes were wrong. Disjoint powers made the person accountable for the
+    // filing unable to attach a receipt. Identical powers removed the distinction
+    // entirely, so switching role changed nothing anybody could see. A finance team is a
+    // hierarchy: a clerk works the queue, a controller works the same queue and also signs
+    // off and configures.
+    for (const capability of DEVELOPMENT_ACTOR.capabilities) {
+      expect(can(DEVELOPMENT_CHECKER, capability)).toBe(true);
     }
+
+    expect(can(DEVELOPMENT_ACTOR, 'decide')).toBe(true);
+    expect(can(DEVELOPMENT_CHECKER, 'decide')).toBe(true);
   });
 
-  it('keeps configure as the one genuinely separate power', async () => {
-    // Changing a materiality threshold is a supervisor's act, and unlike decide/verify it
-    // is not made safe by a per-item rule — so it stays a capability.
+  it('gives only the controller the two supervisory powers', async () => {
+    expect(can(DEVELOPMENT_ACTOR, 'verify')).toBe(false);
     expect(can(DEVELOPMENT_ACTOR, 'configure')).toBe(false);
+    expect(can(DEVELOPMENT_CHECKER, 'verify')).toBe(true);
     expect(can(DEVELOPMENT_CHECKER, 'configure')).toBe(true);
+  });
+
+  it('describes what each role is for, in words the interface can show', async () => {
+    // Two names in a corner tell a reader nothing. The difference between them is the
+    // reason there are two, so it is stated rather than implied.
+    for (const actorId of [DEVELOPMENT_ACTOR.id, DEVELOPMENT_CHECKER.id]) {
+      expect(ROLE_SUMMARY[actorId]).toBeTruthy();
+    }
+    expect(ROLE_SUMMARY[DEVELOPMENT_ACTOR.id]).toMatch(/cannot sign off/i);
+  });
+
+  it('still refuses a controller signing off their own attachment', async () => {
+    // The hierarchy is not the control. Holding `verify` lets Layla sign off other
+    // people's work; it does not let her approve her own, and that rule is per attachment.
+    expect(canVerify({ verifierId: 'controller', makerId: 'controller' }).allowed).toBe(false);
+    expect(canVerify({ verifierId: 'controller', makerId: 'reviewer' }).allowed).toBe(true);
   });
 });
 

@@ -144,6 +144,13 @@ export default async function AssurancePage() {
       )}
 
       <p className="mt-8 border-t pt-4 text-xs text-muted-foreground">
+        A reviewer attaches receipts; a controller does that <em>and</em> signs off other
+        people&rsquo;s attachments. Nobody signs off their own, whichever role they hold —
+        that rule is per attachment, not per person, which is why your own work appears
+        here greyed rather than hidden.{' '}
+      </p>
+
+      <p className="mt-2 text-xs text-muted-foreground">
         Selected by value above{' '}
         {formatMinorUnits(config.makerChecker.materialityThreshold)}, by automatic
         attachment, and by {Math.round(config.makerChecker.sampleRate * 100)}% sampling of

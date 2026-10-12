@@ -48,37 +48,51 @@ export interface Actor {
 }
 
 /**
- * Two development identities with the **same** powers.
+ * Two roles, and the difference between them is a hierarchy rather than a split.
  *
- * An earlier version gave them disjoint capabilities — one could only attach, the other
- * only sign off — and that was wrong in a way worth recording, because it is the mistake
- * most implementations of this control make.
+ * This went through two wrong shapes before this one, and both are worth recording.
  *
- * Segregation of duties is a property of an *item*, not of a person. A controller in a
- * real finance team attaches receipts all day and signs off their colleagues' work; what
- * they may never do is approve something they themselves decided. Modelling it as two
- * permanently different roles is both stricter than the control requires and weaker than
- * it looks: stricter because the person accountable for the filing could not do the
- * product's main job, and weaker because the role split invites the belief that the
- * capability check *is* the control, when the only thing actually preventing self-approval
- * is `canVerify` comparing two identities on one attachment.
+ * First the two roles held *disjoint* powers — one could only attach, the other only sign
+ * off. That made the person accountable for the VAT filing unable to do the product's main
+ * job, and it implied that the capability check was the control, when the only thing
+ * preventing self-approval is `canVerify` comparing two identities on one attachment.
  *
- * So both identities hold `decide` and `verify`. The control lives in one place, applies
- * per attachment, and is legible as a single sentence: you cannot sign off your own work.
- * Switching between the two in development is how that is demonstrated.
+ * Then both roles held *identical* powers. That fixed the hierarchy and destroyed the
+ * distinction: switching between them changed nothing anybody could see, which is a
+ * perfectly correct model of a product that does not need two roles.
+ *
+ * The shape that is actually true of a finance team is a superset. A clerk works the
+ * queue. A controller works the same queue *and* signs off other people's attachments
+ * *and* sets the thresholds. Everything the clerk can do, the controller can also do —
+ * which is why the queue is not hidden from either of them — and the controller holds two
+ * powers on top.
+ *
+ * Segregation of duties then does the remaining work, per attachment rather than per
+ * person: a controller who attached a receipt still cannot be the one who signs it off.
+ * That is the sentence the interface has to make visible, and it is why both mechanisms
+ * exist rather than one.
  */
+
+/** The clerk. Works the review queue; cannot sign off anybody's work, including their own. */
 export const DEVELOPMENT_ACTOR: Actor = {
   id: 'reviewer',
-  displayName: 'Faisal (reviewer)',
-  capabilities: ['view', 'decide', 'verify'],
+  displayName: 'Faisal · Reviewer',
+  capabilities: ['view', 'decide'],
   clientIds: null,
 };
 
+/** The supervisor. Everything the reviewer can do, plus sign-off and configuration. */
 export const DEVELOPMENT_CHECKER: Actor = {
   id: 'controller',
-  displayName: 'Layla (controller)',
+  displayName: 'Layla · Controller',
   capabilities: ['view', 'decide', 'verify', 'configure'],
   clientIds: null,
+};
+
+/** One line describing what each role is for, shown wherever the role is named. */
+export const ROLE_SUMMARY: Readonly<Record<string, string>> = {
+  reviewer: 'Attaches receipts to charges. Cannot sign off attachments.',
+  controller: 'Attaches receipts, signs off other people’s attachments, and sets thresholds.',
 };
 
 let hostResolver: (() => Promise<Actor>) | null = null;

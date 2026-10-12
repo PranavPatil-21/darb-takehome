@@ -25,7 +25,7 @@ export default async function VatOverviewPage() {
 
   return (
     <Page>
-      <ExposureSummary data={data} />
+      <ExposureSummary data={data} actor={actor} />
       <StatusBar breakdown={data.byStatus} />
       <AgeingTable rows={data.ageing} />
       <EnginePerformance data={data} />

@@ -3,6 +3,7 @@ import { formatMinorUnits } from '@/lib/format';
 import { modulePath } from '@/lib/platform/module-config';
 import { AGE_BUCKET_LABEL, type AgeBucket } from '@/lib/platform/transaction-status';
 import type { AgeingRow } from '@/lib/platform/dashboard';
+import { t } from '@/lib/content/messages';
 
 /**
  * How long the gap has been open.
@@ -31,10 +32,8 @@ export function AgeingTable({ rows }: { rows: AgeingRow[] }) {
 
   return (
     <section className="mt-10">
-      <h2 className="text-sm font-medium">How long the gap has been open</h2>
-      <p className="mt-0.5 text-xs text-muted-foreground">
-        Undocumented charges only, by age.
-      </p>
+      <h2 className="text-sm font-medium">{t('overview.ageing.title')}</h2>
+      <p className="mt-0.5 text-xs text-muted-foreground">{t('overview.ageing.hint')}</p>
 
       <ul className="mt-3 divide-y divide-border/60 border-y border-border/60">
         {rows.map((row) => (

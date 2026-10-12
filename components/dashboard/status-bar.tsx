@@ -3,6 +3,7 @@ import { formatMinorUnits } from '@/lib/format';
 import { modulePath } from '@/lib/platform/module-config';
 import { TRANSACTION_STATUS, type TransactionDocumentationStatus } from '@/lib/platform/transaction-status';
 import type { StatusBreakdown } from '@/lib/platform/dashboard';
+import { t } from '@/lib/content/messages';
 
 /**
  * Where the period's money sits, by documentation status.
@@ -33,10 +34,8 @@ export function StatusBar({ breakdown }: { breakdown: StatusBreakdown[] }) {
 
   return (
     <section className="mt-10">
-      <h2 className="text-sm font-medium">Where the period&rsquo;s spend sits</h2>
-      <p className="mt-0.5 text-xs text-muted-foreground">
-        By value, not by count — one large charge outweighs ten small ones.
-      </p>
+      <h2 className="text-sm font-medium">{t('overview.spend.title')}</h2>
+      <p className="mt-0.5 text-xs text-muted-foreground">{t('overview.spend.hint')}</p>
 
       <div
         className="mt-3 flex h-2.5 w-full overflow-hidden rounded-full bg-muted"

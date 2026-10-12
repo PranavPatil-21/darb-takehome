@@ -1,6 +1,7 @@
 import { formatDay, formatMinorUnits, formatTime } from '@/lib/format';
 import { merchantSimilarity } from '@/lib/matching/merchant';
 import { chargeDifferences, type ComparableCharge } from '@/lib/ui/comparison';
+import { t } from '@/lib/content/messages';
 
 /**
  * The hardest case in the product, stated honestly.
@@ -36,20 +37,17 @@ export function AmbiguityCallout({ charges }: { charges: ComparableCharge[] }) {
   return (
     <section className="mt-4 rounded-md border border-amber-300/60 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-950/40">
       <h3 className="text-sm font-medium text-amber-900 dark:text-amber-200">
-        These charges are equally good matches
+        {t('ambiguity.title')}
       </h3>
 
       {differences.length === 0 ? (
         <p className="mt-1.5 text-sm text-amber-900/90 dark:text-amber-200/90">
-          Nothing in either charge separates them. The receipt cannot decide this — rejecting
-          both and asking the driver which purchase it was is safer than guessing.
+          {t('ambiguity.identical')}
         </p>
       ) : (
         <>
           <p className="mt-1.5 text-sm text-amber-900/90 dark:text-amber-200/90">
-            Everything the receipt can be compared on is identical. They differ only in{' '}
-            {list(differences.map((d) => d.phrase))} — check the paper receipt for that, not
-            the figures below.
+            {t('ambiguity.differs', { fields: list(differences.map((d) => d.phrase)) })}
           </p>
 
           <dl className="mt-3 grid gap-2 text-xs sm:grid-cols-2">

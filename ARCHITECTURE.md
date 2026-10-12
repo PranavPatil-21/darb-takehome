@@ -165,7 +165,38 @@ take-home restraint and produced something coherent but thin. That was the wrong
 
 ---
 
-## 6. Build output is separate from the dev server
+## 6. Content
+
+Every sentence the capability shows is a keyed entry in `lib/content/messages.ts`, read
+through `t(key, params)`. Components contain keys, never prose.
+
+Inline copy has three costs that only appear later. Changing a wording means finding every
+component that happens to contain it. A host mounting the module cannot adapt one phrase to
+their own vocabulary without forking it. And the product cannot be translated at all —
+which for a Saudi VAT product is not a future nicety, since Arabic is the language the
+people doing this work read receipts in.
+
+| Concern | Mechanism |
+|---|---|
+| Change a wording | edit one catalogue entry |
+| Host uses different vocabulary | `configureMessages({ 'nav.charges': 'Transactions' })` |
+| Second language | a full catalogue is an override of every key |
+| Counting | `singular\|plural` templates selected by `params.count` |
+| Values inside sentences | `{name}` placeholders, substituted at render |
+
+Two deliberate failure modes. An unsupplied placeholder renders as `{amount}` rather than
+collapsing to a blank, and an unknown key renders as the key. Both are copy bugs, and both
+should be visible the first time anybody looks at the screen — a sentence with a silently
+missing value reads as finished and says the wrong thing.
+
+Not a dependency. A full i18n library brings locale negotiation, plural-rule tables, and
+date and currency formatting, all of which this already has or does not need for one
+locale. The point at which it earns its place is a language with richer plural categories
+than English, which would supply its own selector alongside its catalogue.
+
+---
+
+## 7. Build output is separate from the dev server
 
 `next dev` and `next build` both write to `.next` by default, and they write incompatible
 things into it. Running a build while a dev server is up leaves that server serving a
@@ -180,7 +211,7 @@ anybody who opens a second terminal to check the project compiles. `next.config.
 
 ---
 
-## 7. What breaks first
+## 8. What breaks first
 
 Honest list, in the order it would bite.
 
@@ -199,7 +230,7 @@ contract.
 
 ---
 
-## 8. Testing strategy
+## 9. Testing strategy
 
 285 tests, 16 suites, and the split is deliberate.
 

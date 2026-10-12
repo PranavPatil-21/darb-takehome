@@ -3,6 +3,7 @@ import { formatMinorUnits, formatPercent } from '@/lib/format';
 import { modulePath } from '@/lib/platform/module-config';
 import type { DashboardData } from '@/lib/platform/dashboard';
 import { can, type Actor } from '@/lib/platform/identity';
+import { t, type MessageKey } from '@/lib/content/messages';
 
 /**
  * The headline: how exposed is this period, and whose desk is the work on.
@@ -24,36 +25,58 @@ export function ExposureSummary({ data, actor }: { data: DashboardData; actor: A
   if (chargeCount === 0) {
     return (
       <section>
-        <h1 className="text-sm font-medium text-muted-foreground">Receipt coverage</h1>
-        <p className="mt-2 text-2xl font-semibold tracking-tight">No charges loaded yet</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Card transactions arrive through <code className="text-xs">POST /api/transactions</code>.
+        <h1 className="text-sm font-medium text-muted-foreground">
+          {t('overview.period.all')}
+        </h1>
+        <p className="mt-2 text-2xl font-semibold tracking-tight">
+          {t('overview.noCharges.title')}
         </p>
+        <p className="mt-1 text-sm text-muted-foreground">{t('overview.noCharges.body')}</p>
       </section>
     );
   }
 
   const clear = undocumentedCount === 0;
+  const staleBy = describeGap(period?.to ?? null, new Date());
 
   return (
     <section>
+      {/* The eyebrow names the period only. It previously read "Receipt coverage", which
+          contradicted the figure directly beneath it — that figure is the amount *not*
+          covered, so scanning the two together said the opposite of the truth. The
+          headline now carries its own meaning and does not depend on the label above it. */}
       <h1 className="text-sm font-medium text-muted-foreground">
-        Receipt coverage{period ? ` · ${period.label}` : ''}
+        {period ? period.label : t('overview.period.all')}
       </h1>
 
       {clear ? (
-        <p className="mt-2 text-3xl font-semibold tracking-tight">Every charge has a receipt</p>
+        <p className="mt-2 text-3xl font-semibold tracking-tight">{t('overview.allCovered')}</p>
       ) : (
         <>
           <p className="mt-2 text-3xl font-semibold tracking-tight tabular-nums">
-            {formatMinorUnits(undocumentedSpend)} unsupported
+            {t('overview.unsupported', { amount: formatMinorUnits(undocumentedSpend) })}
           </p>
           <p className="mt-1.5 text-sm text-muted-foreground tabular-nums">
-            {undocumentedCount} of {chargeCount} charges · {formatPercent(data.coverageByValue)} of
-            spend is covered · {formatMinorUnits(data.vatAtRisk)} of input VAT rests on it
+            {t('overview.supporting', {
+              undocumented: undocumentedCount,
+              total: chargeCount,
+              coverage: formatPercent(data.coverageByValue),
+              vat: formatMinorUnits(data.vatAtRisk),
+            })}
           </p>
         </>
       )}
+
+      {/* A period that is not the current month looks like stale data unless the screen
+          says otherwise. It is derived from the newest charge on purpose — anchoring on
+          the clock would report 0% covered to anyone opening this after the data's month
+          has passed — but the reader cannot know that, and silently showing a figure for
+          a month long gone is how a dashboard loses trust. */}
+      {staleBy ? (
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          {t('overview.stale', { gap: staleBy })}
+        </p>
+      ) : null}
 
       {/* A doorway only appears for work this reader can actually do. Offering a
           reviewer "96 attachments need sign-off" sends them to a screen that refuses
@@ -64,8 +87,7 @@ export function ExposureSummary({ data, actor }: { data: DashboardData; actor: A
           <Desk
             href={modulePath('review')}
             count={data.awaitingDecision}
-            singular="document needs a decision"
-            plural="documents need a decision"
+            messageKey="overview.desk.review"
             primary
           />
         ) : null}
@@ -73,16 +95,14 @@ export function ExposureSummary({ data, actor }: { data: DashboardData; actor: A
           <Desk
             href={modulePath('assurance')}
             count={data.awaitingVerification}
-            singular="attachment needs sign-off"
-            plural="attachments need sign-off"
+            messageKey="overview.desk.assurance"
             primary={!can(actor, 'decide')}
           />
         ) : null}
         <Desk
           href={modulePath('exceptions')}
           count={data.exceptions}
-          singular="exception"
-          plural="exceptions"
+          messageKey="overview.desk.exceptions"
         />
       </div>
     </section>
@@ -98,14 +118,12 @@ export function ExposureSummary({ data, actor }: { data: DashboardData; actor: A
 function Desk({
   href,
   count,
-  singular,
-  plural,
+  messageKey,
   primary = false,
 }: {
   href: string;
   count: number;
-  singular: string;
-  plural: string;
+  messageKey: MessageKey;
   primary?: boolean;
 }) {
   if (count === 0) return null;
@@ -119,7 +137,30 @@ function Desk({
           : 'inline-flex h-10 items-center rounded-md border px-4 text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
       }
     >
-      {count} {count === 1 ? singular : plural}
+      {t(messageKey, { count })}
     </Link>
   );
+}
+
+/**
+ * How far behind the reported period is, in words, or null when it is current.
+ *
+ * Returns a duration rather than a date because the reader's question is "is this
+ * current?", not "when exactly did it end" — and a duration answers it without arithmetic.
+ */
+function describeGap(periodEnd: Date | null, now: Date): string | null {
+  if (periodEnd === null) return null;
+
+  const months =
+    (now.getUTCFullYear() - periodEnd.getUTCFullYear()) * 12 +
+    (now.getUTCMonth() - periodEnd.getUTCMonth());
+
+  // One month behind is normal: a period closes before the next one has much in it.
+  if (months < 2) return null;
+  if (months < 12) return `${months} months`;
+
+  const years = Math.floor(months / 12);
+  const rest = months % 12;
+  const yearPart = `${years} ${years === 1 ? 'year' : 'years'}`;
+  return rest === 0 ? yearPart : `${yearPart} and ${rest} ${rest === 1 ? 'month' : 'months'}`;
 }

@@ -119,6 +119,8 @@ export const confirmMatch = actionClient
             decidedBy: actor.id,
             decidedAt: new Date(),
             verificationRequired: verification.required,
+            verificationTrigger: verification.required ? verification.trigger : null,
+            verificationReason: verification.required ? verification.reason : null,
           },
         });
 

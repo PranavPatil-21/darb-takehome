@@ -21,18 +21,22 @@ export function ModuleNav({
   items,
   counts,
   moduleName,
+  switcher,
 }: {
   items: NavItem[];
   counts: NavCounts;
   moduleName: string;
+  /** Rendered by the server layout; the nav itself stays ignorant of identity. */
+  switcher?: React.ReactNode;
 }) {
   const pathname = usePathname();
 
   return (
     <div className="border-b">
       <div className="mx-auto w-full max-w-6xl px-6">
-        <div className="flex items-center gap-6 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 py-3">
           <span className="text-sm font-semibold tracking-tight">{moduleName}</span>
+          {switcher}
         </div>
 
         <nav aria-label={moduleName}>

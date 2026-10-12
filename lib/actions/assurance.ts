@@ -9,6 +9,7 @@ import { can, resolveActor } from '@/lib/platform/identity';
 import { recordEvent } from '@/lib/platform/audit';
 import { canVerify } from '@/lib/platform/verification';
 import { releaseConfirmedDocumentSlot } from '@/lib/services/slot-claim';
+import { CONFIRMED_MATCH_STATUSES, type MatchStatus } from '@/lib/domain/enums';
 import { modulePath } from '@/lib/platform/module-config';
 
 /**
@@ -35,7 +36,7 @@ const overturnSchema = z.object({
 
 export interface AssuranceResult {
   ok: boolean;
-  effect: 'UPHELD' | 'OVERTURNED' | 'ALREADY_VERIFIED' | 'REFUSED';
+  effect: 'UPHELD' | 'OVERTURNED' | 'ALREADY_VERIFIED' | 'REFUSED' | 'STALE';
   message: string;
 }
 
@@ -62,6 +63,7 @@ export const upholdAttachment = actionClient
           decidedBy: true,
           verifiedAt: true,
           confidence: true,
+          status: true,
         },
       });
 
@@ -119,6 +121,7 @@ export const overturnAttachment = actionClient
           decidedBy: true,
           verifiedAt: true,
           confidence: true,
+          status: true,
         },
       });
 
@@ -131,6 +134,20 @@ export const overturnAttachment = actionClient
       const permitted = canVerify({ verifierId: actor.id, makerId: match.decidedBy });
       if (!permitted.allowed) {
         return { ok: false, effect: 'REFUSED' as const, message: permitted.reason };
+      }
+
+      // The attachment may have been detached by a maker since this page was rendered.
+      // `verifiedAt` alone does not catch that: it is still null, so without this guard an
+      // overturn would run against a match that no longer holds anything — releasing a
+      // slot it does not own, possibly flipping the document's status, and writing an
+      // audit event asserting that a checker detached an attachment which by then did not
+      // exist. Polluting the trail is the real harm; the trail is the product.
+      if (!CONFIRMED_MATCH_STATUSES.includes(match.status as MatchStatus)) {
+        return {
+          ok: false,
+          effect: 'STALE' as const,
+          message: 'This attachment was already removed by someone else. Refresh to see the queue.',
+        };
       }
 
       // Detaching goes through the same compare-and-set release a rejection uses, so the

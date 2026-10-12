@@ -3,6 +3,7 @@ import { moduleConfig } from '@/lib/platform/module-config';
 import { visibleNavItems } from '@/lib/platform/navigation';
 import { getNavCounts } from '@/lib/platform/counts';
 import { ModuleNav } from '@/components/chrome/module-nav';
+import { ActorSwitcher } from '@/components/chrome/actor-switcher';
 
 /**
  * The module shell.
@@ -29,6 +30,7 @@ export default async function VatModuleLayout({ children }: { children: React.Re
         items={visibleNavItems(actor)}
         counts={counts}
         moduleName={config.moduleName}
+        switcher={<ActorSwitcher actor={actor} />}
       />
       {children}
     </div>

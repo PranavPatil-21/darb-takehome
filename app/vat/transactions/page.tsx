@@ -1,6 +1,5 @@
 import Link from 'next/link';
 import { resolveActor } from '@/lib/platform/identity';
-import { applyEnvironmentConfig } from '@/lib/platform/bootstrap';
 import { modulePath } from '@/lib/platform/module-config';
 import { getChargeRegister } from '@/lib/platform/charge-register';
 import {
@@ -41,8 +40,6 @@ export default async function ChargeRegisterPage({
 }: {
   searchParams: Promise<{ status?: string; age?: string; q?: string }>;
 }) {
-  applyEnvironmentConfig();
-
   const params = await searchParams;
   const actor = await resolveActor();
 

@@ -1,5 +1,4 @@
 import { resolveActor } from '@/lib/platform/identity';
-import { applyEnvironmentConfig } from '@/lib/platform/bootstrap';
 import { getDashboard } from '@/lib/platform/dashboard';
 import { formatPercent } from '@/lib/format';
 import { ExposureSummary } from '@/components/dashboard/exposure-summary';
@@ -18,8 +17,6 @@ import { AgeingTable } from '@/components/dashboard/ageing-table';
 export const dynamic = 'force-dynamic';
 
 export default async function VatOverviewPage() {
-  applyEnvironmentConfig();
-
   const actor = await resolveActor();
   // Passed in rather than read inside, so the whole page renders against one instant and
   // the ageing buckets cannot disagree with the coverage figure above them.

@@ -85,9 +85,11 @@ export const DEFAULT_MODULE_CONFIG: ModuleConfig = {
   },
 };
 
-let current: ModuleConfig = DEFAULT_MODULE_CONFIG;
+let current: ModuleConfig | null = null;
 
-/** Called once by the host at startup. */
+/**
+ * Called once by the host at startup. Takes precedence over the environment.
+ */
 export function configureModule(config: Partial<ModuleConfig>): void {
   current = {
     ...DEFAULT_MODULE_CONFIG,
@@ -97,16 +99,56 @@ export function configureModule(config: Partial<ModuleConfig>): void {
 }
 
 export function resetModuleConfig(): void {
-  current = DEFAULT_MODULE_CONFIG;
+  current = null;
+}
+
+/**
+ * Configuration from the environment, for the case where there is no host.
+ *
+ * Resolved lazily on first read rather than from an explicit bootstrap call, because the
+ * capability is entered from several places — a page render, a webhook route, a server
+ * action — and a bootstrap that each of them had to remember to call is a bootstrap that
+ * one of them will not. That failure is silent and asymmetric: ingestion would decide
+ * verification against the default while the screens read the configured value, and the
+ * queue would simply be empty with nothing to indicate why.
+ *
+ * Invalid values are ignored rather than thrown on. A typo in an environment variable
+ * should not take a capability down at boot, and the safe reading of an unrecognised
+ * control mode is the one that changes nothing.
+ */
+function fromEnvironment(): ModuleConfig {
+  const modes: readonly MakerCheckerMode[] = ['OFF', 'POST_HOC', 'BLOCKING'];
+  const rawMode = process.env.DARB_MAKER_CHECKER?.trim().toUpperCase() as MakerCheckerMode;
+  const mode = modes.includes(rawMode) ? rawMode : DEFAULT_MODULE_CONFIG.makerChecker.mode;
+
+  const num = (raw: string | undefined, fallback: number) => {
+    const value = Number(raw);
+    return raw !== undefined && Number.isFinite(value) && value >= 0 ? value : fallback;
+  };
+
+  const basePath = process.env.DARB_BASE_PATH?.trim();
+
+  return {
+    ...DEFAULT_MODULE_CONFIG,
+    ...(basePath ? { basePath } : {}),
+    makerChecker: {
+      mode,
+      materialityThreshold: num(
+        process.env.DARB_MATERIALITY_THRESHOLD,
+        DEFAULT_MODULE_CONFIG.makerChecker.materialityThreshold,
+      ),
+      sampleRate: Math.min(
+        num(process.env.DARB_SAMPLE_RATE, DEFAULT_MODULE_CONFIG.makerChecker.sampleRate),
+        1,
+      ),
+      verifyAutoMatches: DEFAULT_MODULE_CONFIG.makerChecker.verifyAutoMatches,
+    },
+  };
 }
 
 export function moduleConfig(): ModuleConfig {
+  if (current === null) current = fromEnvironment();
   return current;
-}
-
-/** True once a host (or the environment bootstrap) has configured anything. */
-export function isConfigured(): boolean {
-  return current !== DEFAULT_MODULE_CONFIG;
 }
 
 /** Builds a path inside the module, so no component hardcodes the mount point. */

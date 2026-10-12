@@ -370,6 +370,8 @@ export async function persistMatchResult(
           decidedBy: isWinner ? 'system' : null,
           decidedAt: isWinner ? new Date() : null,
           verificationRequired: verification?.required ?? false,
+          verificationTrigger: verification?.required ? verification.trigger : null,
+          verificationReason: verification?.required ? verification.reason : null,
         };
 
         await tx.documentMatch.upsert({

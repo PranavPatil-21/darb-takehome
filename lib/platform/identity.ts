@@ -92,9 +92,35 @@ export function resetActorResolver(): void {
   hostResolver = null;
 }
 
+/**
+ * The cookie the development switcher sets.
+ *
+ * It exists so the segregation-of-duties control can actually be exercised without an
+ * authentication system: the two development identities hold disjoint capabilities, and
+ * without a way to move between them the checker's queue is permanently unreachable and
+ * the control is only a claim. A mounted host supplies a real resolver and this is never
+ * consulted.
+ */
+export const DEV_ACTOR_COOKIE = 'darb_dev_actor';
+
+export function developmentActorFor(cookieValue: string | undefined): Actor {
+  return cookieValue === DEVELOPMENT_CHECKER.id ? DEVELOPMENT_CHECKER : DEVELOPMENT_ACTOR;
+}
+
 export async function resolveActor(): Promise<Actor> {
   if (hostResolver) return hostResolver();
-  return DEVELOPMENT_ACTOR;
+
+  // Reading the cookie here rather than in each page keeps the rule that nothing
+  // downstream touches a request directly. The import is dynamic because `next/headers`
+  // is only available inside a request scope, and this module is also used from tests and
+  // from the ingestion pipeline, where there is no request at all.
+  try {
+    const { cookies } = await import('next/headers');
+    const store = await cookies();
+    return developmentActorFor(store.get(DEV_ACTOR_COOKIE)?.value);
+  } catch {
+    return DEVELOPMENT_ACTOR;
+  }
 }
 
 export function can(actor: Actor, capability: Capability): boolean {

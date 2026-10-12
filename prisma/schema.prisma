@@ -156,6 +156,13 @@ model DocumentMatch {
   verifiedAt           DateTime?
   /// UPHELD | OVERTURNED. Null while it is still waiting.
   verificationOutcome  String?
+  /// MATERIAL | AUTOMATIC | SAMPLED — why this was selected. Persisted rather than
+  /// recomputed, because the policy that selected it can change afterwards and a checker
+  /// reading "sampled" on something chosen for its value would misjudge how carefully to
+  /// look.
+  verificationTrigger  String?
+  /// The sentence shown to the checker, snapshotted for the same reason.
+  verificationReason   String?
 
   @@unique([documentId, transactionId])
   @@index([documentId, confidence])

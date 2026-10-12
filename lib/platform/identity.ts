@@ -48,29 +48,36 @@ export interface Actor {
 }
 
 /**
- * The identity used when no host has supplied one.
+ * Two development identities with the **same** powers.
  *
- * It holds `decide` but **not** `verify`, so the maker-checker control is genuinely
- * exercised in development rather than silently satisfied by one all-powerful user. A
- * control that is only ever met by an actor holding every capability has not been tested.
+ * An earlier version gave them disjoint capabilities — one could only attach, the other
+ * only sign off — and that was wrong in a way worth recording, because it is the mistake
+ * most implementations of this control make.
+ *
+ * Segregation of duties is a property of an *item*, not of a person. A controller in a
+ * real finance team attaches receipts all day and signs off their colleagues' work; what
+ * they may never do is approve something they themselves decided. Modelling it as two
+ * permanently different roles is both stricter than the control requires and weaker than
+ * it looks: stricter because the person accountable for the filing could not do the
+ * product's main job, and weaker because the role split invites the belief that the
+ * capability check *is* the control, when the only thing actually preventing self-approval
+ * is `canVerify` comparing two identities on one attachment.
+ *
+ * So both identities hold `decide` and `verify`. The control lives in one place, applies
+ * per attachment, and is legible as a single sentence: you cannot sign off your own work.
+ * Switching between the two in development is how that is demonstrated.
  */
 export const DEVELOPMENT_ACTOR: Actor = {
   id: 'reviewer',
-  displayName: 'Reviewer',
-  capabilities: ['view', 'decide'],
+  displayName: 'Faisal (reviewer)',
+  capabilities: ['view', 'decide', 'verify'],
   clientIds: null,
 };
 
-/**
- * The second development identity, for exercising segregation of duties.
- *
- * Switching between the two is how the four-eyes path is demonstrated without an auth
- * system. In a mounted deployment neither exists.
- */
 export const DEVELOPMENT_CHECKER: Actor = {
   id: 'controller',
-  displayName: 'Controller',
-  capabilities: ['view', 'verify', 'configure'],
+  displayName: 'Layla (controller)',
+  capabilities: ['view', 'decide', 'verify', 'configure'],
   clientIds: null,
 };
 

@@ -30,8 +30,8 @@ export default async function AssurancePage() {
       <Page>
         <PageHeader title="Assurance" />
         <EmptyState
-          title="This queue is not yours"
-          description="Signing off an attachment requires the verify permission, and it is deliberately separate from the permission to attach — the person who made a decision cannot be the one who approves it."
+          title="You cannot sign off attachments"
+          description="This queue needs the verify permission, which the host application grants."
         />
       </Page>
     );
@@ -50,6 +50,10 @@ export default async function AssurancePage() {
   }
 
   const queue = await getAssuranceQueue(actor);
+  // Own attachments are shown, marked, rather than filtered away. Hiding them would make
+  // the queue look finished while work waits on a colleague, and would make the control
+  // itself invisible — the reader would never learn why some rows cannot be actioned.
+  const mine = queue.filter((row) => !row.canSignOff).length;
 
   return (
     <Page>
@@ -58,7 +62,11 @@ export default async function AssurancePage() {
         description={
           queue.length === 0
             ? 'Nothing is waiting on a second pair of eyes.'
-            : `${queue.length} ${queue.length === 1 ? 'attachment needs' : 'attachments need'} an independent sign-off. Largest first.`
+            : `${queue.length} ${queue.length === 1 ? 'attachment needs' : 'attachments need'} an independent sign-off, largest first. ${
+                mine === 0
+                  ? 'None of them are yours, so you may sign off any.'
+                  : `${mine} ${mine === 1 ? 'is' : 'are'} your own and must go to a colleague.`
+              }`
         }
       />
 

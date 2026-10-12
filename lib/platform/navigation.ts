@@ -41,6 +41,9 @@ export const NAV_ITEMS: readonly NavItem[] = [
     label: 'Assurance',
     href: modulePath('assurance'),
     requires: 'verify',
+    // Both queues appear for anyone who works them. Hiding Assurance from a person who
+    // attaches receipts implied the two are different jobs; they are the same job, and the
+    // only thing they may not do is sign off their own attachment.
     badge: 'assurance',
     hint: 'Attachments awaiting an independent sign-off',
   },

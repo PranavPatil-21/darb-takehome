@@ -42,14 +42,25 @@ describe('resolving the actor', () => {
     expect(await resolveActor()).toEqual(hostUser);
   });
 
-  it('gives the development identity decide but not verify', async () => {
-    // Segregation of duties is only genuinely exercised if the default actor cannot do
-    // both halves. An all-powerful development user satisfies a maker-checker control
-    // without ever testing it.
-    expect(can(DEVELOPMENT_ACTOR, 'decide')).toBe(true);
-    expect(can(DEVELOPMENT_ACTOR, 'verify')).toBe(false);
-    expect(can(DEVELOPMENT_CHECKER, 'verify')).toBe(true);
-    expect(can(DEVELOPMENT_CHECKER, 'decide')).toBe(false);
+  it('gives both development identities the same powers', async () => {
+    // Deliberately the same, and the previous asymmetry was the bug. Segregation of
+    // duties is a property of an item, not of a person: a controller attaches receipts all
+    // day and signs off colleagues' work, and may only never approve something they
+    // themselves decided. Splitting it into two roles made the person accountable for the
+    // filing unable to do the product's main job, and invited the belief that the
+    // capability check was the control — when the only thing preventing self-approval is
+    // `canVerify` comparing two identities on one attachment.
+    for (const actor of [DEVELOPMENT_ACTOR, DEVELOPMENT_CHECKER]) {
+      expect(can(actor, 'decide')).toBe(true);
+      expect(can(actor, 'verify')).toBe(true);
+    }
+  });
+
+  it('keeps configure as the one genuinely separate power', async () => {
+    // Changing a materiality threshold is a supervisor's act, and unlike decide/verify it
+    // is not made safe by a per-item rule — so it stays a capability.
+    expect(can(DEVELOPMENT_ACTOR, 'configure')).toBe(false);
+    expect(can(DEVELOPMENT_CHECKER, 'configure')).toBe(true);
   });
 });
 

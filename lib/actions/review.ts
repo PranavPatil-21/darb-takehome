@@ -47,10 +47,25 @@ const matchIdSchema = z.object({ matchId: z.number().int().positive() });
 export interface ReviewActionResult {
   ok: boolean;
   /** What actually happened, so the UI can distinguish a no-op from a change. */
-  effect: 'CONFIRMED' | 'REJECTED' | 'ALREADY_DECIDED' | 'BLOCKED';
+  effect: 'CONFIRMED' | 'REJECTED' | 'ALREADY_DECIDED' | 'BLOCKED' | 'REFUSED';
   documentId: number;
   documentStatus: string;
   message: string;
+}
+
+/** The shape returned when the actor may not decide at all. */
+async function refusal(matchId: number): Promise<ReviewActionResult> {
+  const match = await prisma.documentMatch.findUnique({
+    where: { id: matchId },
+    select: { documentId: true, document: { select: { status: true } } },
+  });
+  return {
+    ok: false,
+    effect: 'REFUSED',
+    documentId: match?.documentId ?? 0,
+    documentStatus: match?.document.status ?? 'UNKNOWN',
+    message: t('result.denied.decide'),
+  };
 }
 
 export const confirmMatch = actionClient
@@ -59,10 +74,13 @@ export const confirmMatch = actionClient
     const { matchId } = parsedInput;
     const actor = await resolveActor();
 
+    // Authorisation is checked on the write path, not only in the interface: a button
+    // that is not rendered is not a control. It answers with a refusal rather than a
+    // thrown error, because `handleServerError` would otherwise flatten it into "please
+    // retry" — which misdescribes a working control and asks for something that cannot
+    // succeed.
     if (!can(actor, 'decide')) {
-      // Authorisation is checked on the write path, not only in the interface: a button
-      // that is not rendered is not a control.
-      throw new Error(t('result.denied.decide'));
+      return refusal(matchId);
     }
 
     const result = await prisma
@@ -193,7 +211,7 @@ export const rejectMatch = actionClient
     const actor = await resolveActor();
 
     if (!can(actor, 'decide')) {
-      throw new Error(t('result.denied.decide'));
+      return refusal(matchId);
     }
 
     const result = await prisma.$transaction(async (tx) => {

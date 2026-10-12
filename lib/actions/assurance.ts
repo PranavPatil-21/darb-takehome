@@ -6,7 +6,7 @@ import { z } from 'zod';
 import prisma from '@/lib/prisma';
 import { log } from '@/lib/logger';
 import { actionClient } from '@/lib/actions/safe-action-client';
-import { can, resolveActor } from '@/lib/platform/identity';
+import { can, resolveActor, type Actor } from '@/lib/platform/identity';
 import { recordEvent } from '@/lib/platform/audit';
 import { canVerify } from '@/lib/platform/verification';
 import { releaseConfirmedDocumentSlot } from '@/lib/services/slot-claim';
@@ -41,18 +41,36 @@ export interface AssuranceResult {
   message: string;
 }
 
-async function requireChecker() {
+/**
+ * The capability gate, checked on the write path rather than only in the interface — a
+ * button that is not rendered is not a control.
+ *
+ * It returns a refusal rather than throwing. A thrown error is flattened by
+ * `handleServerError` into "something went wrong, please retry", which is wrong twice
+ * over for a refusal: it describes a working control as a fault, and it tells the
+ * operator to do something that cannot ever succeed. Per-item segregation below already
+ * answers with `REFUSED`; the capability check answers the same way, so every refusal in
+ * this module reads as a decision rather than a failure.
+ */
+async function resolveChecker(): Promise<
+  { ok: true; actor: Actor } | { ok: false; result: AssuranceResult }
+> {
   const actor = await resolveActor();
   if (!can(actor, 'verify')) {
-    throw new Error(t('result.denied.verify'));
+    return {
+      ok: false,
+      result: { ok: false, effect: 'REFUSED', message: t('result.denied.verify') },
+    };
   }
-  return actor;
+  return { ok: true, actor };
 }
 
 export const upholdAttachment = actionClient
   .schema(upholdSchema)
   .action(async ({ parsedInput }): Promise<AssuranceResult> => {
-    const actor = await requireChecker();
+    const checker = await resolveChecker();
+    if (!checker.ok) return checker.result;
+    const actor = checker.actor;
 
     const result = await prisma.$transaction(async (tx) => {
       const match = await tx.documentMatch.findUnique({
@@ -110,7 +128,9 @@ export const upholdAttachment = actionClient
 export const overturnAttachment = actionClient
   .schema(overturnSchema)
   .action(async ({ parsedInput }): Promise<AssuranceResult> => {
-    const actor = await requireChecker();
+    const checker = await resolveChecker();
+    if (!checker.ok) return checker.result;
+    const actor = checker.actor;
 
     const result = await prisma.$transaction(async (tx) => {
       const match = await tx.documentMatch.findUnique({

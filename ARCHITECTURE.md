@@ -240,7 +240,7 @@ contract.
 
 ## 9. Testing strategy
 
-285 tests, 16 suites, and the split is deliberate.
+313 tests, 18 suites, and the split is deliberate.
 
 - **Pure and fast** — the matcher, scoring boundaries, merchant similarity, comparison,
   coverage arithmetic, status derivation, verification policy, boundary decoders. No
@@ -250,6 +250,29 @@ contract.
   actions, the audit trail. These properties are enforced by unique constraints, and a
   mocked client would only prove the code *intends* to be safe.
 
+Two modules are replaced under Jest, both under `__tests__/helpers/`. `next-safe-action`
+ships ESM only and ts-jest's CommonJS transform cannot load it; `revalidatePath` reaches
+into a per-request store that does not exist outside a request. Before the doubles, the
+review tests mirrored the action bodies rather than calling them — and a mirror is a
+re-implementation, so it passes happily while the real action does something else. The
+doubles replace the dispatcher and the cache bust, not the action, so what the tests run
+is the production path. Neither stub asserts library behaviour, which is not this
+project's to assert.
+
 Where a test pins a decision rather than a behaviour, the comment says which decision and
 why, so a future change that breaks it can tell whether it is fixing a bug or discarding
 an argument.
+
+### A refusal is not an error
+
+Every write is gated twice: by capability, and — for sign-off — by segregation. Both gates
+originally answered by throwing, and `handleServerError` flattens any throw into "Something
+went wrong while recording that decision. Please retry."
+
+That sentence is wrong twice over for a refusal. It presents a control that is working
+exactly as designed as a fault in the software, which teaches operators that permissions
+are flaky rather than deliberate. And it tells them to retry something that cannot ever
+succeed, so the advice is not merely unhelpful but false. Both gates now return a typed
+`REFUSED` result carrying its own sentence, which the interface renders where it already
+renders every other outcome. `__tests__/action-refusals.test.ts` fails if either goes back
+to throwing.

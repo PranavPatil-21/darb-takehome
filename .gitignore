@@ -49,3 +49,8 @@ prisma/dev.db-journal
 !.env.example
 prisma/test.db
 prisma/test.db-journal
+
+# Production build output, kept separate from the dev server's .next
+/.next-build/
+# A deliberately-started second dev server's build directory (see scripts/check-dev-port.mjs)
+/.next-alt/

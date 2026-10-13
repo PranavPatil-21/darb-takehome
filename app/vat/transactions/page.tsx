@@ -1,0 +1,174 @@
+import { t } from '@/lib/content/messages';
+import Link from 'next/link';
+import { resolveActor } from '@/lib/platform/identity';
+import { modulePath } from '@/lib/platform/module-config';
+import { getChargeRegister } from '@/lib/platform/charge-register';
+import {
+  AGE_BUCKET_LABEL,
+  TRANSACTION_STATUS,
+  type AgeBucket,
+  type TransactionDocumentationStatus,
+} from '@/lib/platform/transaction-status';
+import { formatDay, formatMinorUnits } from '@/lib/format';
+import { ChargeStatusPill } from '@/components/charges/charge-status-pill';
+import { FilterChips } from '@/components/charges/filter-chips';
+import { SearchBox } from '@/components/charges/search-box';
+import { Page, PageHeader, EmptyState } from '@/components/shell/page';
+
+/**
+ * The charge register — every card transaction, categorised.
+ *
+ * This is the screen the brief never asked for and a finance team cannot work without:
+ * the review queue answers "what needs deciding", and this answers "where does this
+ * specific charge stand", which is the question asked when an auditor samples a line or a
+ * driver disputes one.
+ *
+ * All filter state lives in the URL. A filtered register is the thing people send each
+ * other — "the twelve over a month old, here" — and state held in the client cannot be
+ * pasted into a message.
+ */
+
+export const dynamic = 'force-dynamic';
+
+const STATUSES: TransactionDocumentationStatus[] = [
+  'MISSING',
+  'IN_REVIEW',
+  'REJECTED',
+  'DOCUMENTED',
+];
+
+export default async function ChargeRegisterPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string; age?: string; q?: string }>;
+}) {
+  const params = await searchParams;
+  const actor = await resolveActor();
+
+  const status = STATUSES.includes(params.status as TransactionDocumentationStatus)
+    ? (params.status as TransactionDocumentationStatus)
+    : undefined;
+  const age = (['0-7', '8-30', '31-60', '60+'] as AgeBucket[]).includes(params.age as AgeBucket)
+    ? (params.age as AgeBucket)
+    : undefined;
+
+  const register = await getChargeRegister(
+    actor,
+    { status, age, query: params.q },
+    new Date(),
+  );
+
+  return (
+    <Page width="wide">
+      <PageHeader
+        title="Charges"
+        description={t('charges.subtitle')}
+        meta={
+          <p className="text-sm text-muted-foreground tabular-nums">
+            {register.matchedCount} {register.matchedCount === 1 ? 'charge' : 'charges'} ·{' '}
+            {formatMinorUnits(register.matchedValue)}
+            {status || age || params.q ? ' matching this filter' : ' in total'}
+          </p>
+        }
+      />
+
+      <div className="flex flex-wrap items-center gap-3">
+        <FilterChips
+          counts={register.statusCounts}
+          activeStatus={status}
+          activeAge={age}
+          query={params.q}
+        />
+        <SearchBox defaultValue={params.q ?? ''} status={status} age={age} />
+      </div>
+
+      {age ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Showing undocumented charges aged {AGE_BUCKET_LABEL[age].toLowerCase()}.{' '}
+          <Link href={modulePath('transactions')} className="underline underline-offset-4">
+            Clear
+          </Link>
+        </p>
+      ) : null}
+
+      {register.rows.length === 0 ? (
+        <EmptyState
+          title={t('charges.empty.title')}
+          description={t('charges.empty.body')}
+          action={
+            <Link
+              href={modulePath('transactions')}
+              className="text-sm underline underline-offset-4"
+            >
+              Show all charges
+            </Link>
+          }
+        />
+      ) : (
+        // The register sits in a card with its own scroll container and a header that
+        // stays put. A 200-row table running to the page edge with a header that scrolls
+        // away is a table nobody can read past the first screen.
+        <div className="mt-5 overflow-hidden rounded-xl border bg-card shadow-xs">
+          <div className="max-h-[calc(100vh-18rem)] overflow-auto">
+          <table className="w-full min-w-[46rem] border-collapse text-sm">
+            <thead>
+              <tr className="border-b">
+                <th className="sticky top-0 z-10 whitespace-nowrap bg-surface-sunken px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Merchant</th>
+                <th className="sticky top-0 z-10 whitespace-nowrap bg-surface-sunken px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right">Amount</th>
+                <th className="sticky top-0 z-10 whitespace-nowrap bg-surface-sunken px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Date</th>
+                <th className="sticky top-0 z-10 whitespace-nowrap bg-surface-sunken px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Card</th>
+                <th className="sticky top-0 z-10 whitespace-nowrap bg-surface-sunken px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground">Status</th>
+                <th className="sticky top-0 z-10 whitespace-nowrap bg-surface-sunken px-4 py-2.5 text-left text-xs font-semibold uppercase tracking-wider text-muted-foreground text-right">Age</th>
+              </tr>
+            </thead>
+            <tbody>
+              {register.rows.map((row) => (
+                <tr key={row.id} className="border-b border-border/60 transition-colors last:border-0 hover:bg-accent/40">
+                  <td className="px-4 py-2.5">
+                    <Link
+                      href={modulePath('transactions', String(row.id))}
+                      className="underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {row.merchantName}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">
+                    {formatMinorUnits(row.amount, row.currency)}
+                  </td>
+                  <td className="px-4 py-2.5 tabular-nums text-muted-foreground">
+                    {formatDay(row.transactionAt)}
+                  </td>
+                  <td className="px-4 py-2.5 tabular-nums text-muted-foreground">
+                    ••••{row.cardLast4}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <ChargeStatusPill
+                      status={row.status}
+                      awaitingVerification={row.awaitingVerification}
+                    />
+                  </td>
+                  <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">
+                    {row.status === 'DOCUMENTED' ? '—' : `${row.age}d`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          </div>
+        </div>
+      )}
+
+      {register.hasMore ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Showing the first {register.rows.length} of {register.matchedCount}. Narrow the filter
+          to see the rest.
+        </p>
+      ) : null}
+
+      <p className="mt-6 text-xs text-muted-foreground">
+        Status is derived from the charge&rsquo;s confirmed document, not stored — so it cannot
+        drift from the attachment it describes. {TRANSACTION_STATUS.MISSING.hint}
+      </p>
+    </Page>
+  );
+}

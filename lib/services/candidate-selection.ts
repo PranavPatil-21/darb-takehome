@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { MAX_DATE_DRIFT_DAYS } from '@/lib/matching/scoring-config';
+import { maxDateDriftDaysFor } from '@/lib/services/transaction-matcher';
 import type { CandidateTransaction, MatchableDocument } from '@/lib/services/transaction-matcher';
 
 /**
@@ -17,6 +17,14 @@ import type { CandidateTransaction, MatchableDocument } from '@/lib/services/tra
  * When the document has no readable date we cannot anchor a tight window, so we fall
  * back to a month around the delivery time. Wider, but still bounded — and the matcher's
  * own date signal is absent in that case, so nothing is gained by widening further.
+ *
+ * Note this is now *narrower* than the 45-day window a dated tax invoice gets, which looks
+ * like an inversion and is not. The rule the slack comment below protects is that the
+ * query must never exclude a candidate the matcher would have scored. For a dated
+ * document that rule binds, because `scoreDate` vetoes outside its window and the two
+ * must agree. For an undated one there is no date signal and no date veto, so this bound
+ * is a pragmatic limit on how much of the table to read rather than a statement about
+ * evidence — anchored on arrival time, which is a far weaker anchor than a printed date.
  */
 const UNDATED_DOCUMENT_WINDOW_DAYS = 30;
 const MS_PER_DAY = 86_400_000;
@@ -24,9 +32,14 @@ const MS_PER_DAY = 86_400_000;
 export function candidateWindow(doc: MatchableDocument, receivedAt: Date): { from: Date; to: Date } {
   const parsed = doc.documentDate ? new Date(doc.documentDate) : null;
   const anchor = parsed && !Number.isNaN(parsed.getTime()) ? parsed : receivedAt;
+  // Never narrower than the matcher, on either path. An undated document has no date
+  // signal and therefore no date veto, so the matcher will score a charge at *any*
+  // distance — a flat 30-day fallback was narrower than the 45 days a tax invoice is
+  // allowed, and silently dropped candidates the matcher would have taken. The query is
+  // an optimisation; `scoreDate` is the rule, and the optimisation must never overrule it.
   const radiusDays = parsed && !Number.isNaN(parsed.getTime())
-    ? MAX_DATE_DRIFT_DAYS
-    : UNDATED_DOCUMENT_WINDOW_DAYS;
+    ? maxDateDriftDaysFor(doc)
+    : Math.max(UNDATED_DOCUMENT_WINDOW_DAYS, maxDateDriftDaysFor(doc));
 
   // One day of slack on each side, deliberately.
   //

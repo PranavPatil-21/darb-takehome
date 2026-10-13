@@ -93,6 +93,7 @@ echo
 bold "→ POST /api/transactions  (late-arriving transaction)"
 response=$(curl -sS -X POST "${BASE_URL}/api/transactions" \
   -H 'content-type: application/json' \
+  -H "idempotency-key: demo-late-arrival-$(date +%s)" \
   -d '{"transactions":[{"clientId":1,"cardLast4":"4412","driverPhone":"966551234567","merchantName":"KUDU REST 118 RUH","amount":3300,"currency":"SAR","transactionAt":"2025-06-19T13:12:00Z"}]}' 2>&1)
 if command -v jq >/dev/null 2>&1; then
   printf '%s\n\n' "$(echo "$response" | jq -c '.')"

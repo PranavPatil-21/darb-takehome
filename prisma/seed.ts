@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { recomputeDocumentationStatuses } from '../lib/services/charge-status';
 
 /**
  * Seed data.
@@ -26,6 +27,10 @@ async function main() {
   // Order matters: children before parents.
   await prisma.documentMatch.deleteMany();
   await prisma.transaction.updateMany({ data: { confirmedDocumentId: null } });
+  // ReviewEvent has no foreign key to Document by design, so it must be cleared by name
+  // rather than relying on a cascade.
+  await prisma.reviewEvent.deleteMany();
+  await prisma.transactionBatch.deleteMany();
   await prisma.document.deleteMany();
   await prisma.transaction.deleteMany();
   await prisma.senderIdentity.deleteMany();
@@ -314,6 +319,9 @@ async function main() {
     ],
   });
 
+  await seedOperatingHistory(rawabi.id, nujood.id);
+  await reconcileStatuses(prisma);
+
   const [clients, identities, transactions] = await Promise.all([
     prisma.client.count(),
     prisma.senderIdentity.count(),
@@ -323,6 +331,241 @@ async function main() {
   console.log(
     `Seeded ${clients} clients, ${identities} sender identities, ${transactions} transactions.`,
   );
+}
+
+/**
+ * A month of ordinary trading, behind the eleven scripted scenarios.
+ *
+ * The scripted fixtures exist to demonstrate specific engine behaviours and are
+ * deliberately few. They are not a population: with twenty-three charges every register
+ * reads as scaffolding, ageing has nothing to distribute across, the coverage figure moves
+ * by four percent per decision, and a filter that returns three rows cannot show whether
+ * filtering works.
+ *
+ * So this adds background volume: charges across both fleets spread over the period, a
+ * realistic share already documented, and the rest left open at varying ages. It is
+ * generated rather than written out because the point is the shape of the distribution,
+ * not any individual row — and it is fully deterministic, because a demo that looks
+ * different on every reset cannot be discussed.
+ *
+ * It touches nothing the scripted scenarios rely on: ids start well clear of them, and the
+ * merchants, cards and dates are chosen not to collide with the fixtures' matching.
+ */
+async function seedOperatingHistory(rawabiId: number, nujoodId: number): Promise<void> {
+  const MERCHANTS = [
+    'SASCO FUEL ST 12 RUH', 'PANDA HYPERMARKET BR 220', 'NAHDI PHARMACY 118',
+    'CARREFOUR HYPER RUH', 'DUNKIN DONUTS RUH 41', 'STARBUCKS KHOBAR 7',
+    'LULU HYPERMARKET DMM', 'AL OTHAIM MARKET 55', 'HERFY FOOD SERVICES',
+    'SAUDIA CATERING RUH', 'ABDUL LATIF JAMEEL', 'BUPA ARABIA CLINIC',
+    'MOBILY RECHARGE', 'STC PAY TOPUP', 'UBER TRIP RIYADH',
+    'JARIR MARKETING 09', 'IKEA RIYADH', 'ACE HARDWARE RUH',
+    'SAUDI POST PARCEL', 'ARAMEX DOMESTIC 02',
+  ];
+
+  // A linear congruential generator, seeded by hand. Deterministic across resets so the
+  // demo is the same every time and can be talked about; `Math.random()` would make every
+  // screenshot and every conversation about a number obsolete on the next seed.
+  let seed = 20250601;
+  const next = () => {
+    seed = (seed * 1664525 + 1013904223) % 4294967296;
+    return seed / 4294967296;
+  };
+  const pick = <T,>(items: readonly T[]): T => {
+    const chosen = items[Math.floor(next() * items.length)];
+    if (chosen === undefined) throw new Error('pick() called with an empty list');
+    return chosen;
+  };
+
+  // The cards whose scripted scenarios are *sensitive to volume*, named once and checked
+  // below rather than described in prose and hoped for.
+  //
+  // Most scripted cards tolerate background charges happily. These three do not, and each
+  // for a different reason:
+  //
+  //   4412  almost every scripted scenario runs on it, including the orphan receipt whose
+  //         entire purpose is to have no plausible charge. Volume here gave it four
+  //         candidates at 0.67, turning a demonstrated UNMATCHED into a review item — and
+  //         since the re-match sweep only revisits UNMATCHED documents, that also made the
+  //         late-arrival rescue structurally invisible.
+  //   5520  carries the one-rule-each scenarios (17-22), which depend on nothing else
+  //         being scoped to that card. Two to four extra charges a day for 28 days is
+  //         exactly the noise that flips a scripted AUTO_MATCHED into an ambiguity.
+  //   6604  Layla is the NO_CANDIDATE_TRANSACTIONS scenario and must have no charges at
+  //         all. She is also a Rawabi identity, so Nujood volume on her card would
+  //         describe a driver whose charges belong to a different client.
+  //
+  // The assertion is the point. A comment asking the next person not to add a card is a
+  // wish; this fails the seed immediately and says which scenario it would have broken.
+  const SCENARIO_CRITICAL_CARDS = ['4412', '5520', '6604'] as const;
+
+  const fleets = [
+    // Deliberately excludes the cards the scripted scenarios depend on.
+    //
+    // Card 5520 / driver 966554440001 carries transactions 17-22, and the comment at the
+    // top of this file promises nothing else is scoped to that card so those scenarios
+    // cannot be perturbed. Including it in the background generator made that promise
+    // false: 2-4 extra charges a day for 28 days on the same card is exactly the kind of
+    // noise that flips a scripted AUTO_MATCHED into an ambiguity.
+    // 4412 is excluded for the same reason as 5520: it is the card almost every scripted
+    // scenario runs on, including the orphan receipt whose whole purpose is to have no
+    // plausible charge. Background volume generated onto it gave that receipt four
+    // candidates at 0.67 and turned a demonstrated UNMATCHED into a review item — which
+    // also made it invisible to the re-match sweep, since the sweep only revisits
+    // UNMATCHED documents. Volume belongs on the cards nothing is scripted against.
+    { clientId: rawabiId, cards: ['8899', '1155'], drivers: ['966557778888', null] },
+    { clientId: nujoodId, cards: ['7731'], drivers: ['966561112233'] },
+  ];
+
+  const collisions = fleets
+    .flatMap((fleet) => fleet.cards)
+    .filter((card) => (SCENARIO_CRITICAL_CARDS as readonly string[]).includes(card));
+
+  if (collisions.length > 0) {
+    throw new Error(
+      `Background volume would be generated onto scenario-critical card(s) ${collisions.join(', ')}. ` +
+        'Those cards carry scripted demo scenarios that extra charges silently break — ' +
+        'see SCENARIO_CRITICAL_CARDS above. Put background volume on a different card.',
+    );
+  }
+
+  const rows: {
+    id: number; clientId: number; cardLast4: string; driverPhone: string | null;
+    merchantName: string; amount: number; transactionAt: Date;
+  }[] = [];
+
+  // Ids from 1000 so nothing can collide with the scripted charges or with the
+  // late-arriving transaction the demo script posts.
+  let id = 1000;
+
+  for (const fleet of fleets) {
+    for (let day = 1; day <= 28; day += 1) {
+      // Two to four charges a day per fleet — enough to populate a register without
+      // pretending a two-client demo is an enterprise.
+      const perDay = 2 + Math.floor(next() * 3);
+
+      for (let n = 0; n < perDay; n += 1) {
+        const cardIndex = Math.floor(next() * fleet.cards.length);
+        const card = fleet.cards[cardIndex];
+        const driver = fleet.drivers[cardIndex] ?? null;
+        if (card === undefined) continue;
+        // Amounts are log-distributed: mostly small, occasionally large. A uniform spread
+        // would make the by-value status bar meaningless, since its whole point is that
+        // one large charge outweighs many small ones.
+        const magnitude = next();
+        const amount =
+          magnitude > 0.94
+            ? 50_000 + Math.floor(next() * 250_000)
+            : magnitude > 0.7
+              ? 8_000 + Math.floor(next() * 30_000)
+              : 1_500 + Math.floor(next() * 7_000);
+
+        rows.push({
+          id: id++,
+          clientId: fleet.clientId,
+          cardLast4: card,
+          driverPhone: driver,
+          merchantName: pick(MERCHANTS),
+          amount,
+          transactionAt: at(
+            `2025-06-${String(day).padStart(2, '0')}T${String(7 + Math.floor(next() * 12)).padStart(2, '0')}:${String(Math.floor(next() * 60)).padStart(2, '0')}:00Z`,
+          ),
+        });
+      }
+    }
+  }
+
+  await prisma.transaction.createMany({ data: rows });
+
+  // Roughly two thirds already have a receipt, which is what a fleet running this for a
+  // few months looks like. Documenting all of them would leave nothing to do on screen;
+  // documenting none would make the coverage figure read as a broken pipeline.
+  const documented = rows.filter(() => next() < 0.66);
+
+  for (const charge of documented) {
+    const document = await prisma.document.create({
+      data: {
+        source: next() < 0.75 ? 'WHATSAPP' : 'EMAIL',
+        externalId: `seed.${charge.id}`,
+        contentHash: `seed-hash-${charge.id}`,
+        senderIdentifier: charge.driverPhone ?? 'fleetops@rawabi-logistics.example',
+        clientId: charge.clientId,
+        driverPhone: charge.driverPhone,
+        status: 'MATCHED',
+        documentType: 'RECEIPT',
+        merchantName: charge.merchantName
+          .replace(/ (ST|BR|RUH|DMM)\b.*$/, '')
+          .replace(/\s+\d+$/, ''),
+        vatNumber: `3000000000${String(charge.id).padStart(5, '0')}`,
+        totalAmount: charge.amount,
+        currency: 'SAR',
+        documentDate: charge.transactionAt,
+        cardLast4: charge.cardLast4,
+        extractionConfidence: 0.9 + next() * 0.09,
+        receivedAt: charge.transactionAt,
+      },
+    });
+
+    // Most attachments are the engine's. A minority were made by a person, because the
+    // segregation-of-duties rule is invisible unless some attachment actually has a human
+    // maker: with every row attributed to 'system', nobody is ever the maker of anything,
+    // `canVerify` never refuses, and switching between the two roles shows no difference
+    // at all. A handful are attributed to the controller specifically, so her own
+    // assurance queue contains work she is not allowed to sign off.
+    const draw = next();
+    const maker =
+      draw < 0.08 ? 'controller' : draw < 0.22 ? 'reviewer' : 'system';
+    const automatic = maker === 'system';
+
+    await prisma.documentMatch.create({
+      data: {
+        documentId: document.id,
+        transactionId: charge.id,
+        confidence: 0.92 + next() * 0.07,
+        signals: JSON.stringify({ amount: 1, cardLast4: 1, merchant: 0.9, date: 1 }),
+        status: automatic ? 'AUTO_CONFIRMED' : 'CONFIRMED',
+        decidedBy: maker,
+        decidedAt: charge.transactionAt,
+        // The same policy the running system applies: material value always, automatic
+        // attachments always, and a sample of the rest.
+        verificationRequired:
+          charge.amount >= 100_000 || automatic || next() < 0.1,
+        verificationTrigger:
+          charge.amount >= 100_000 ? 'MATERIAL' : automatic ? 'AUTOMATIC' : 'SAMPLED',
+        verificationReason:
+          charge.amount >= 100_000
+            ? 'Above the materiality threshold.'
+            : automatic
+              ? 'Attached automatically — no person has seen this yet.'
+              : 'Selected by routine sampling.',
+      },
+    });
+
+    await prisma.transaction.update({
+      where: { id: charge.id },
+      data: { confirmedDocumentId: document.id },
+    });
+  }
+
+  console.log(
+    `Seeded ${rows.length} background charges, ${documented.length} already documented.`,
+  );
+}
+
+/**
+ * Bring every seeded charge's cached status in line with its relations.
+ *
+ * The seed writes `confirmedDocumentId` and match rows directly rather than going through
+ * the write paths that maintain the cache — which is what a bulk import does, and exactly
+ * the case `scripts/backfill-status.ts` exists for. Running the same reconciliation here
+ * means a freshly seeded database is in the state the application would have produced.
+ */
+async function reconcileStatuses(prisma: PrismaClient) {
+  const charges = await prisma.transaction.findMany({ select: { id: true } });
+  await recomputeDocumentationStatuses(
+    prisma,
+    charges.map((charge) => charge.id),
+  );
+  console.log(`Reconciled documentation status for ${charges.length} charges.`);
 }
 
 main()

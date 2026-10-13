@@ -234,10 +234,22 @@ describe('merchant similarity in the matcher', () => {
     expect(scoreMerchant(null, 'ALFANAR FUEL')).toBeNull();
   });
 
-  it('scores zero rather than null when the name normalises away to nothing', () => {
-    // "LLC" is pure legal form — present on the document, but carrying no information.
-    // That is a comparison that happened and failed, not a missing field.
-    expect(scoreMerchant('LLC', 'ALFANAR FUEL')).toBe(0);
+  it('is absent, not zero, when the name normalises away to nothing', () => {
+    // "LLC" is pure legal form. It reads like a comparison that happened and failed, and
+    // that is how this was originally scored — but there was nothing to compare: every
+    // token is noise, so the name asserts neither agreement nor disagreement.
+    //
+    // The distinction is load-bearing because `combine` renormalises over *available*
+    // signals while averaging a present one in at full weight. Scoring this 0 meant a
+    // document that carried a merchant name scored strictly lower than the identical
+    // document with the field blank — reading more off the receipt made the match worse.
+    // Absent restores that monotonicity; see matcher-corroboration.test.ts.
+    expect(scoreMerchant('LLC', 'ALFANAR FUEL')).toBeNull();
+  });
+
+  it('is absent when the acquirer string is pure terminal metadata', () => {
+    // "POS 04 RUH" is a terminal id and a city code — the acquirer side of the same case.
+    expect(scoreMerchant('Alfanar Fuel Station', 'POS 04 RUH')).toBeNull();
   });
 
   it('is symmetric regardless of which side is the noisy bank string', () => {
@@ -264,7 +276,7 @@ describe('the auto-match threshold', () => {
     // Amount-only evidence of 0.85 would normally be awkward to construct; a perfect
     // match is the clean way to prove the comparison is >= rather than >.
     const result = matchDocument(doc(), [txn()]);
-    expect(result.candidates[0].confidence).toBeGreaterThanOrEqual(AUTO_MATCH_THRESHOLD);
+    expect(result.candidates[0]!.confidence).toBeGreaterThanOrEqual(AUTO_MATCH_THRESHOLD);
     expect(result.outcome).toBe('AUTO_MATCHED');
   });
 
@@ -274,7 +286,7 @@ describe('the auto-match threshold', () => {
     const result = matchDocument(doc({ merchantName: 'KUDU RESTAURANT' }), [
       txn({ amount: 11_000 }),
     ]);
-    expect(result.candidates[0].confidence).toBeLessThan(AUTO_MATCH_THRESHOLD);
+    expect(result.candidates[0]!.confidence).toBeLessThan(AUTO_MATCH_THRESHOLD);
     expect(result.outcome).toBe('NEEDS_REVIEW');
   });
 });
@@ -290,14 +302,14 @@ describe('the ambiguity margin', () => {
   it('auto-matches when the gap is exactly the margin', () => {
     // A gap of precisely the margin is not "within" it — the comparison is strict.
     const result = leaderAndRunnerUp(13_000);
-    const gap = result.candidates[0].confidence - result.candidates[1].confidence;
+    const gap = result.candidates[0]!.confidence - result.candidates[1]!.confidence;
     expect(gap).toBeCloseTo(AMBIGUITY_MARGIN, 6);
     expect(result.outcome).toBe('AUTO_MATCHED');
   });
 
   it('routes to review when the gap is a hair under the margin', () => {
     const result = leaderAndRunnerUp(12_980);
-    const gap = result.candidates[0].confidence - result.candidates[1].confidence;
+    const gap = result.candidates[0]!.confidence - result.candidates[1]!.confidence;
     expect(gap).toBeLessThan(AMBIGUITY_MARGIN);
     expect(result.outcome).toBe('NEEDS_REVIEW');
     expect(result.reason).toBe('AMBIGUOUS_TOP_CANDIDATES');
@@ -327,7 +339,7 @@ describe('the review floor', () => {
     const result = matchDocument(sparse, [txn({ amount: 9_900 })]);
 
     expect(result.candidates).toHaveLength(1);
-    expect(result.candidates[0].confidence).toBeCloseTo(MIN_CANDIDATE_THRESHOLD, 6);
+    expect(result.candidates[0]!.confidence).toBeCloseTo(MIN_CANDIDATE_THRESHOLD, 6);
     expect(result.outcome).toBe('NEEDS_REVIEW');
   });
 
@@ -369,7 +381,7 @@ describe('the weak-evidence cap', () => {
     const noMoney = doc({ totalAmount: null, cardLast4: null });
     const result = matchDocument(noMoney, [txn()]);
 
-    expect(result.candidates[0].confidence).toBeCloseTo(WEAK_EVIDENCE_CONFIDENCE_CAP, 6);
+    expect(result.candidates[0]!.confidence).toBeCloseTo(WEAK_EVIDENCE_CONFIDENCE_CAP, 6);
     expect(result.reason).toBe('WEAK_EVIDENCE');
   });
 
@@ -377,7 +389,7 @@ describe('the weak-evidence cap', () => {
     const invoice = doc({ cardLast4: null });
     const result = matchDocument(invoice, [txn()]);
 
-    expect(result.candidates[0].confidence).toBeGreaterThan(WEAK_EVIDENCE_CONFIDENCE_CAP);
+    expect(result.candidates[0]!.confidence).toBeGreaterThan(WEAK_EVIDENCE_CONFIDENCE_CAP);
     expect(result.outcome).toBe('AUTO_MATCHED');
   });
 
@@ -385,7 +397,7 @@ describe('the weak-evidence cap', () => {
     const unreadableTotal = doc({ totalAmount: null });
     const result = matchDocument(unreadableTotal, [txn()]);
 
-    expect(result.candidates[0].confidence).toBeGreaterThan(WEAK_EVIDENCE_CONFIDENCE_CAP);
+    expect(result.candidates[0]!.confidence).toBeGreaterThan(WEAK_EVIDENCE_CONFIDENCE_CAP);
   });
 });
 
@@ -408,7 +420,7 @@ describe('renormalisation', () => {
 
     for (const subset of subsets) {
       const result = matchDocument(doc(subset), [txn()]);
-      expect(result.candidates[0].confidence).toBe(1);
+      expect(result.candidates[0]!.confidence).toBe(1);
     }
   });
 
@@ -416,8 +428,8 @@ describe('renormalisation', () => {
     const result = matchDocument(doc({ cardLast4: null, documentDate: null }), [txn()]);
     // Only amount and merchant remain; a perfect score proves they were renormalised
     // to 100% between them rather than diluted by the missing two.
-    expect(Object.keys(result.candidates[0].signals).sort()).toEqual(['amount', 'merchant']);
-    expect(result.candidates[0].confidence).toBe(1);
+    expect(Object.keys(result.candidates[0]!.signals).sort()).toEqual(['amount', 'merchant']);
+    expect(result.candidates[0]!.confidence).toBe(1);
   });
 
   it('cannot score anything when the document carries no comparable evidence', () => {
@@ -502,7 +514,7 @@ describe('transactions that already hold a receipt', () => {
       txn({ id: 1, hasConfirmedDocument: true }),
       txn({ id: 2, hasConfirmedDocument: false }),
     ]);
-    expect(result.candidates[0].transactionId).toBe(2);
+    expect(result.candidates[0]!.transactionId).toBe(2);
   });
 
   it('reviews when every plausible candidate is already documented', () => {
@@ -533,7 +545,7 @@ describe('degenerate inputs', () => {
     const result = matchDocument(doc(), [...noise, txn({ id: 7 })]);
 
     expect(result.outcome).toBe('AUTO_MATCHED');
-    expect(result.candidates[0].transactionId).toBe(7);
+    expect(result.candidates[0]!.transactionId).toBe(7);
   });
 
   it('treats an UNKNOWN document type with readable fields as still matchable', () => {
@@ -576,8 +588,8 @@ describe('degenerate inputs', () => {
     ]);
 
     for (let i = 1; i < result.candidates.length; i++) {
-      expect(result.candidates[i - 1].confidence).toBeGreaterThanOrEqual(
-        result.candidates[i].confidence,
+      expect(result.candidates[i - 1]!.confidence).toBeGreaterThanOrEqual(
+        result.candidates[i]!.confidence,
       );
     }
   });
@@ -627,21 +639,27 @@ describe('the ambiguity margin is decided in decimal, not in binary floating poi
     expect(margin < AMBIGUITY_MARGIN).toBe(false);
   });
 
-  it('auto-matches the real pair whose raw subtraction falls short of the margin', () => {
+  it('does not call a nominal gap of exactly 0.05 ambiguous', () => {
     // The arithmetic above, driven through the engine. These two candidates score 0.95
     // and 0.90 — a nominal gap of exactly 0.05, which the documented rule puts on the
-    // auto-match side. Compared raw it is 0.04999999999999993, and the document goes to
-    // review instead. This is the pair that catches a regression; the table above only
-    // documents why.
+    // non-ambiguous side. Compared raw it is 0.04999999999999993, and the pair would be
+    // called ambiguous instead. This is the pair that catches a regression; the table
+    // above only documents why.
+    //
+    // Both candidates carry an amount gap (that is how these confidences are produced),
+    // so the engine still routes the document to a human — but for the *amount*, not for
+    // ambiguity. The reason code is what pins the rounding rule: a raw subtraction here
+    // reports `AMBIGUOUS_TOP_CANDIDATES`.
     const document = doc({ totalAmount: 12_800 });
     const result = matchDocument(document, [
       txn({ amount: 13_000 }), // amount 0.875 -> confidence 0.95
       txn({ amount: 14_000 }), // amount 0.750 -> confidence 0.90
     ]);
 
-    expect(result.candidates[0].confidence).toBe(0.95);
-    expect(result.candidates[1].confidence).toBe(0.9);
-    expect(result.outcome).toBe('AUTO_MATCHED');
+    expect(result.candidates[0]!.confidence).toBe(0.95);
+    expect(result.candidates[1]!.confidence).toBe(0.9);
+    expect(result.reason).not.toBe('AMBIGUOUS_TOP_CANDIDATES');
+    expect(result.reason).toBe('UNEXPLAINED_AMOUNT_GAP');
   });
 
   it('still calls a gap a hair under the margin ambiguous', () => {
@@ -673,5 +691,104 @@ describe('the candidate query is never narrower than the matcher', () => {
       new Date(docDate),
     );
     expect(lateOnDaySeven >= from && lateOnDaySeven <= to).toBe(true);
+  });
+});
+
+describe('an emailed invoice is allowed to lag the charge it bills', () => {
+  const invoice = (documentDate: string): MatchableDocument => ({
+    source: 'EMAIL',
+    clientId: 1,
+    driverPhone: null,
+    documentType: 'TAX_INVOICE',
+    merchantName: 'Alfanar Fuel Station',
+    vatNumber: '300000000000003',
+    totalAmount: 12_500,
+    currency: 'SAR',
+    documentDate,
+    cardLast4: '4412',
+    invoiceNumber: 'INV-99812',
+    extractionConfidence: 0.95,
+  });
+
+  const charge: CandidateTransaction = {
+    id: 1,
+    clientId: 1,
+    cardLast4: '4412',
+    driverPhone: null,
+    merchantName: 'ALFANAR FUEL ST 04 RUH',
+    amount: 12_500,
+    currency: 'SAR',
+    transactionAt: new Date('2025-06-14T11:02:00Z'),
+    hasConfirmedDocument: false,
+  };
+
+  const lagging = (days: number) => {
+    const d = new Date('2025-06-14T11:02:00Z');
+    d.setUTCDate(d.getUTCDate() - days);
+    return matchDocument(invoice(d.toISOString()), [charge]);
+  };
+
+  it.each([8, 14, 30])('still scores a supplier invoice dated %i days before the charge', (days) => {
+    // A photographed till receipt is taken at the till, so a week of drift means the date
+    // is wrong. A supplier invoice is dated when it was *raised*, and routinely reaches
+    // the fleet inbox weeks after the card settled. One window served both, as a hard
+    // veto, so an invoice agreeing on amount, card and merchant was discarded outright.
+    const result = lagging(days);
+
+    expect(result.outcome).not.toBe('UNMATCHED');
+    expect(result.candidates).toHaveLength(1);
+    expect(result.vetoed).toHaveLength(0);
+  });
+
+  it('still vetoes a photographed receipt a week and a half old', () => {
+    const receipt: MatchableDocument = { ...invoice('2025-06-01T09:00:00Z'), source: 'WHATSAPP', documentType: 'RECEIPT' };
+
+    const result = matchDocument(receipt, [charge]);
+
+    expect(result.outcome).toBe('UNMATCHED');
+    expect(result.vetoed[0]?.veto).toBe('DATE_OUT_OF_WINDOW');
+  });
+});
+
+describe('the candidate query is never narrower than the matcher, undated too', () => {
+  const invoice: MatchableDocument = {
+    source: 'EMAIL',
+    clientId: 1,
+    driverPhone: null,
+    documentType: 'TAX_INVOICE',
+    merchantName: 'Alfanar Fuel Station',
+    vatNumber: '300000000000003',
+    totalAmount: 12_500,
+    currency: 'SAR',
+    documentDate: null, // OCR could not read it
+    cardLast4: '4412',
+    invoiceNumber: 'INV-99812',
+    extractionConfidence: 0.9,
+  };
+
+  it('fetches a charge the matcher would score when the document has no readable date', () => {
+    // With no date there is no date signal and therefore no date veto, so the matcher will
+    // score a charge at any distance. The query fell back to a flat 30-day radius, which is
+    // narrower than the 45 days a tax invoice is now allowed — so a perfect three-signal
+    // match was never fetched, and a candidate the query drops cannot be overruled.
+    const receivedAt = new Date('2025-07-24T09:00:00Z');
+    const fortyDaysEarlier = new Date('2025-06-14T11:02:00Z');
+
+    const window = candidateWindow(invoice, receivedAt);
+
+    expect(fortyDaysEarlier.getTime()).toBeGreaterThanOrEqual(window.from.getTime());
+    expect(fortyDaysEarlier.getTime()).toBeLessThanOrEqual(window.to.getTime());
+  });
+});
+
+describe('a charge amount that is not a positive number is contradicting, not absent', () => {
+  it('vetoes rather than quietly dropping the amount signal', () => {
+    // The finiteness guard was correct; folding `<= 0` into it was not. A zero charge used
+    // to contradict the receipt and veto the pairing. Returning `null` instead removes the
+    // signal, and the candidate then survives on card, merchant and date alone — so a
+    // 125.00 receipt auto-attached to a charge of 0.00.
+    const result = matchDocument(doc(), [txn({ amount: 0 })]);
+
+    expect(result.outcome).not.toBe('AUTO_MATCHED');
   });
 });

@@ -1,180 +1,72 @@
 import Link from 'next/link';
 import prisma from '@/lib/prisma';
-import { decodeSignals } from '@/lib/domain/enums';
-import { formatDate, formatMinorUnits, formatPercent, REASON_COPY } from '@/lib/format';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
+import { moduleConfig, modulePath } from '@/lib/platform/module-config';
 
 /**
- * Pipeline overview.
+ * The host application, stood in for.
  *
- * Not a required deliverable — it exists because the fastest way to understand what the
- * matcher did is to see every document next to the outcome it reached and the reason it
- * reached it.
+ * This route used to be a second dashboard, duplicating the one inside the module with a
+ * different design — which is exactly the incoherence of two products in one codebase.
+ * What belongs here instead is the thing the capability is actually built to live inside:
+ * somebody else's application, which owns its own navigation and hands this feature a
+ * mount point.
+ *
+ * So this page is deliberately plain. It is not part of the product being evaluated; it is
+ * the frame around it, and its only job is to make the seam visible — one link, into
+ * `modulePath()`, which is wherever the host chose to mount the capability.
  */
 
 export const dynamic = 'force-dynamic';
 
-const STATUS_TONE: Record<string, string> = {
-  MATCHED: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200',
-  NEEDS_REVIEW: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
-  UNMATCHED: 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-200',
-  FAILED: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
-  RECEIVED: 'bg-slate-100 text-slate-900 dark:bg-slate-800 dark:text-slate-200',
-  EXTRACTED: 'bg-sky-100 text-sky-900 dark:bg-sky-950 dark:text-sky-200',
-};
+export default async function HostShellPage() {
+  const config = moduleConfig();
 
-export default async function HomePage() {
-  const [documents, transactionCount, matchedCount] = await Promise.all([
-    prisma.document.findMany({
-      orderBy: { id: 'asc' },
-      include: {
-        matches: {
-          orderBy: [{ confidence: 'desc' }, { transactionId: 'asc' }],
-          include: { transaction: true },
-        },
-      },
-    }),
-    prisma.transaction.count(),
-    prisma.transaction.count({ where: { confirmedDocumentId: { not: null } } }),
+  const [needsReview, charges] = await Promise.all([
+    prisma.document.count({ where: { status: 'NEEDS_REVIEW' } }).catch(() => 0),
+    prisma.transaction.count().catch(() => 0),
   ]);
 
-  const needsReview = documents.filter((d) => d.status === 'NEEDS_REVIEW').length;
-
   return (
-    <main className="mx-auto w-full max-w-6xl px-6 py-10">
-      <header className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight">Darb · document matching</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Receipts and invoices arrive by WhatsApp and email, are extracted by OCR, and are scored
-          against card transactions. High-confidence matches attach themselves; everything
-          ambiguous goes to{' '}
-          <Link href="/review" className="underline underline-offset-4">
-            review
-          </Link>
-          .
-        </p>
-      </header>
+    <div className="mx-auto w-full max-w-3xl px-6 py-16">
+      <p className="text-xs uppercase tracking-wide text-muted-foreground">
+        Host application
+      </p>
+      <h1 className="mt-2 text-2xl font-semibold tracking-tight">Darb Fleet</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        This page stands in for whatever product the receipt-matching capability is mounted
+        inside. The host owns its own navigation, its own users and every route outside the
+        mount point below.
+      </p>
 
-      <div className="mb-8 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Documents ingested" value={documents.length} />
-        <Stat label="Transactions seeded" value={transactionCount} />
-        <Stat label="Transactions documented" value={matchedCount} />
-        <Stat label="Awaiting review" value={needsReview} />
+      <div className="mt-8 rounded-lg border bg-card p-5">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 className="font-medium">{config.moduleName}</h2>
+            <p className="mt-1 max-w-md text-sm text-muted-foreground">
+              Mounted at <code className="text-xs">{config.basePath}</code>. Receipts arrive
+              by WhatsApp and email, are read by OCR and matched to card charges; anything
+              the engine will not decide goes to a person.
+            </p>
+            <p className="mt-2 text-xs text-muted-foreground tabular-nums">
+              {charges} charges tracked · {needsReview} waiting on a decision
+            </p>
+          </div>
+
+          <Link
+            href={modulePath()}
+            className="inline-flex h-10 shrink-0 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            Open {config.moduleName}
+          </Link>
+        </div>
       </div>
 
-      {documents.length === 0 ? (
-        <Card>
-          <CardContent className="py-14 text-center text-sm text-muted-foreground">
-            No documents yet. Run{' '}
-            <code className="rounded bg-muted px-1 py-0.5 text-xs">npm run webhooks:demo</code> to
-            fire the sample payloads through both webhooks.
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">Every document, and what the matcher decided</CardTitle>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>#</TableHead>
-                  <TableHead>Source</TableHead>
-                  <TableHead>Document</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Best candidate</TableHead>
-                  <TableHead className="text-right">Confidence</TableHead>
-                  <TableHead>Why</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {documents.map((document) => {
-                  const best = document.matches[0];
-                  const signals = best ? decodeSignals(best.signals) : {};
-                  return (
-                    <TableRow key={document.id}>
-                      <TableCell className="tabular-nums text-muted-foreground">
-                        {document.id}
-                      </TableCell>
-                      <TableCell className="text-xs">{document.source}</TableCell>
-                      <TableCell>
-                        <div className="font-medium">{document.merchantName ?? '—'}</div>
-                        <div className="text-xs text-muted-foreground">
-                          {formatDate(document.documentDate)}
-                          {document.cardLast4 ? ` · ••••${document.cardLast4}` : ''}
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatMinorUnits(document.totalAmount, document.currency ?? 'SAR')}
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={STATUS_TONE[document.status]}>
-                          {document.status.replace('_', ' ')}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {best ? (
-                          <>
-                            <div className="text-sm">{best.transaction.merchantName}</div>
-                            <div className="text-xs text-muted-foreground">
-                              txn #{best.transaction.id} ·{' '}
-                              {formatMinorUnits(
-                                best.transaction.amount,
-                                best.transaction.currency,
-                              )}
-                            </div>
-                          </>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">none</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {best ? formatPercent(best.confidence) : '—'}
-                        {best ? (
-                          <div className="text-[10px] text-muted-foreground">
-                            {Object.entries(signals)
-                              .map(([key, score]) => `${key[0]}${Math.round(score * 100)}`)
-                              .join(' · ')}
-                          </div>
-                        ) : null}
-                      </TableCell>
-                      <TableCell className="max-w-xs text-xs text-muted-foreground">
-                        {document.failureReason
-                          ? (REASON_COPY[document.failureReason] ?? document.failureReason)
-                          : document.status === 'MATCHED'
-                            ? REASON_COPY.CONFIDENT_SINGLE_CANDIDATE
-                            : '—'}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-    </main>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: number }) {
-  return (
-    <Card>
-      <CardContent className="py-4">
-        <p className="text-2xl font-semibold tabular-nums">{value}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">{label}</p>
-      </CardContent>
-    </Card>
+      <p className="mt-6 text-xs text-muted-foreground">
+        The capability reaches the host through two seams and nothing else:{' '}
+        <code className="text-xs">setActorResolver</code> for identity and permissions, and{' '}
+        <code className="text-xs">configureModule</code> for the mount path and control
+        posture. It never reads a session, and it owns only its own tables.
+      </p>
+    </div>
   );
 }

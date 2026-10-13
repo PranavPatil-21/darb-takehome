@@ -32,13 +32,3 @@ export interface DocumentExtractor {
   extract(file: Buffer, mimeType: string): Promise<ExtractedDocument>;
 }
 
-/** Thrown by an extractor when the input is unusable. Caught at the pipeline edge. */
-export class ExtractionError extends Error {
-  constructor(
-    message: string,
-    readonly cause?: unknown,
-  ) {
-    super(message);
-    this.name = 'ExtractionError';
-  }
-}

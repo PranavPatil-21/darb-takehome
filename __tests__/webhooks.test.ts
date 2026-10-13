@@ -108,7 +108,7 @@ describe('email webhook', () => {
     const body = await second.json();
 
     expect(second.status).toBe(200);
-    expect(body.documents[0].disposition).toBe('DUPLICATE');
+    expect(body.documents[0]!.disposition).toBe('DUPLICATE');
     expect(await testPrisma.document.count()).toBe(1);
   });
 
@@ -229,7 +229,10 @@ describe('whatsapp webhook', () => {
     const body = await response.json();
 
     expect(response.status).toBe(200);
-    expect(body.messages[0].disposition).toBe('FAILED');
+    // SKIPPED, not FAILED: the provider does not know this id, so redelivering it would
+    // fail identically forever. A media store that is reachable but *failing* reports
+    // RETRYABLE instead — see pipeline-isolation.test.ts.
+    expect(body.messages[0]!.disposition).toBe('SKIPPED');
     expect(await testPrisma.document.count()).toBe(0);
   });
 
@@ -268,7 +271,7 @@ describe('whatsapp webhook', () => {
     );
     const body = await second.json();
 
-    expect(body.messages[0].disposition).toBe('DUPLICATE');
+    expect(body.messages[0]!.disposition).toBe('DUPLICATE');
     expect(await testPrisma.document.count()).toBe(1);
   });
 });

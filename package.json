@@ -3,13 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "node scripts/ensure-env.mjs && next dev --turbopack",
-    "build": "next build --turbopack",
-    "start": "next start",
+    "dev": "node scripts/ensure-env.mjs && node scripts/check-dev-port.mjs && next dev --turbopack",
+    "build": "NEXT_DIST_DIR=.next-build next build --turbopack",
+    "start": "NEXT_DIST_DIR=.next-build next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "node scripts/ensure-env.mjs && jest --runInBand",
     "test:watch": "jest --watch",
+    "test:coverage": "node scripts/ensure-env.mjs && jest --runInBand --coverage",
     "db:push": "prisma db push --skip-generate",
     "db:seed": "tsx prisma/seed.ts",
     "db:reset": "node scripts/ensure-env.mjs && prisma db push --skip-generate && tsx prisma/seed.ts",
@@ -17,7 +18,8 @@
     "postinstall": "node scripts/ensure-env.mjs && prisma generate",
     "setup": "prisma generate && npm run db:reset",
     "webhooks:demo": "bash scripts/send-sample-webhooks.sh",
-    "payloads:generate": "tsx scripts/generate-payloads.ts"
+    "payloads:generate": "tsx scripts/generate-payloads.ts",
+    "db:backfill-status": "node scripts/ensure-env.mjs && tsx scripts/backfill-status.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -28,7 +30,6 @@
     "lucide-react": "^1.55.0",
     "next": "15.5.27",
     "next-safe-action": "^8.7.3",
-    "radix-ui": "^1.7.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
     "shadcn": "^4.21.4",

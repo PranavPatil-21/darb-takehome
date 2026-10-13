@@ -1,3 +1,9 @@
+import {
+  CONTAINMENT_WEIGHT,
+  DICE_WEIGHT,
+  GENERIC_ONLY_PENALTY,
+} from '@/lib/matching/scoring-config';
+
 /**
  * Merchant-name normalisation and similarity.
  *
@@ -21,8 +27,8 @@ const NOISE_TOKENS = new Set([
   // City and airport codes commonly appended by acquirers
   'RUH', 'JED', 'DMM', 'RIYADH', 'JEDDAH', 'DAMMAM', 'KHOBAR', 'MAKKAH', 'MADINAH',
   'ALKHOBAR', 'MECCA', 'MEDINA', 'TABUK', 'ABHA',
-  // Filler
-  'THE', 'AND', 'FOR', 'OF', 'AL',
+  // Filler. 'AL' is deliberately absent — see `joinArabicArticle`.
+  'THE', 'AND', 'FOR', 'OF',
   // Branch markers (the number itself is stripped separately)
   'BR', 'BRANCH', 'STORE', 'STR', 'ST', 'NO', 'NUM', 'UNIT', 'POS', 'TERM', 'TERMINAL',
 ]);
@@ -38,6 +44,36 @@ const GENERIC_TOKENS = new Set([
   'SERVICES', 'SERVICE', 'SUPPLIES', 'SOLUTIONS', 'RENT', 'RENTAL', 'CAR', 'CARS', 'AUTO',
   'HOTEL', 'PHARMACY', 'CLINIC', 'TRANSPORT', 'LOGISTICS',
 ]);
+
+/**
+ * Rejoins a detached Arabic definite article to the word it belongs to.
+ *
+ * Acquirers and receipts disagree about the space: "AL JAZIRA MARKET" on the statement,
+ * "Aljazira Market" on the receipt. Dropping `AL` as noise looked right but only fires on
+ * the detached form, so the two spellings tokenised differently and the same merchant
+ * scored as a near-contradiction.
+ *
+ * Joining rather than dropping is what makes the two forms converge, and it leaves names
+ * where `Al` is already fused — "ALFANAR" — untouched. There is no linguistic way to tell
+ * "Al-Fanar" from "Alfanar", which is precisely why the normalisation must not try: it
+ * moves both spellings to the same canonical form instead of guessing which is which.
+ */
+function joinArabicArticle(tokens: string[]): string[] {
+  const joined: string[] = [];
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === undefined) continue;
+
+    const next = tokens[i + 1];
+    if (token === 'AL' && next !== undefined) {
+      joined.push(`AL${next}`);
+      i += 1;
+      continue;
+    }
+    joined.push(token);
+  }
+  return joined;
+}
 
 /** Strips accents so "Café" and "Cafe" compare equal. */
 function stripDiacritics(value: string): string {
@@ -62,10 +98,9 @@ export function normaliseMerchant(raw: string | null | undefined): string[] {
 
   if (!cleaned) return [];
 
-  const tokens = cleaned
-    .split(/\s+/)
-    .map((token) => token.replace(/^0+(?=\d)/, '')) // "04" -> "4" before the digit test
-    .filter((token) => token.length > 0 && !/^\d+$/.test(token) && !NOISE_TOKENS.has(token));
+  const tokens = joinArabicArticle(cleaned.split(/\s+/)).filter(
+    (token) => token.length > 0 && !/^\d+$/.test(token) && !NOISE_TOKENS.has(token),
+  );
 
   // Single characters are usually debris from the punctuation split above ("ST. 04" ->
   // "ST 04"), so they are dropped — but only while something identifying survives.
@@ -140,16 +175,18 @@ export function merchantSimilarity(
   const containment = intersection.length / Math.min(setA.size, setB.size);
   const dice = diceCoefficient(a.join(''), b.join(''));
 
-  let score = 0.55 * containment + 0.45 * dice;
+  let score = CONTAINMENT_WEIGHT * containment + DICE_WEIGHT * dice;
 
+  // Nothing distinctive overlaps — whatever agreement exists is sector vocabulary.
+  //
+  // This deliberately does not require *both* names to carry a distinctive token. That
+  // earlier guard disabled the discount in the one case with no discriminating power at
+  // all: when the acquirer string itself reduces to "FUEL STATION", it matched every
+  // filling station in the fleet at ~0.9 and ranked them indistinguishably. A name that
+  // says only "a fuel station" is weak evidence regardless of which side it came from.
   const distinctiveOverlap = intersection.filter((token) => !GENERIC_TOKENS.has(token));
-  const bothHaveDistinctiveTokens =
-    [...setA].some((t) => !GENERIC_TOKENS.has(t)) && [...setB].some((t) => !GENERIC_TOKENS.has(t));
-
-  // Both names have a distinctive part, but none of it overlaps — the apparent
-  // similarity is sector vocabulary, not the same merchant.
-  if (distinctiveOverlap.length === 0 && bothHaveDistinctiveTokens) {
-    score *= 0.4;
+  if (distinctiveOverlap.length === 0) {
+    score *= GENERIC_ONLY_PENALTY;
   }
 
   return Math.min(1, Math.max(0, Number(score.toFixed(4))));

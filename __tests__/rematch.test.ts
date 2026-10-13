@@ -3,7 +3,8 @@ import { MockExtractor, setExtractor } from '@/lib/extraction';
 import type { DocumentExtractor, ExtractedDocument } from '@/lib/extraction/types';
 import { ingestDocument } from '@/lib/services/document-ingestion';
 import { rematchDocument, rematchUnmatchedDocuments } from '@/lib/services/rematch';
-import { releaseConfirmedDocumentSlot } from '@/lib/services/slot-claim';
+import { rejectMatch } from '@/lib/actions/review';
+import { runAction } from './helpers/actions';
 import { resetDatabase, seedMinimalWorld, testPrisma } from './helpers/db';
 
 /**
@@ -57,7 +58,7 @@ describe('document arriving before its transaction', () => {
     const { documentId } = await ingestDocument(orphan, testPrisma);
     await testPrisma.transaction.create({ data: lateArrival });
 
-    const outcomes = await rematchUnmatchedDocuments({}, testPrisma);
+    const { outcomes } = await rematchUnmatchedDocuments({}, testPrisma);
 
     expect(outcomes).toEqual([
       expect.objectContaining({ documentId, previousStatus: 'UNMATCHED', status: 'MATCHED' }),
@@ -93,7 +94,7 @@ describe('document arriving before its transaction', () => {
   it('leaves the document UNMATCHED when the sweep finds nothing new', async () => {
     const { documentId } = await ingestDocument(orphan, testPrisma);
 
-    const outcomes = await rematchUnmatchedDocuments({}, testPrisma);
+    const { outcomes } = await rematchUnmatchedDocuments({}, testPrisma);
 
     expect(outcomes).toEqual([expect.objectContaining({ documentId, changed: false })]);
   });
@@ -136,7 +137,7 @@ describe('sweep scope', () => {
       testPrisma,
     );
 
-    const outcomes = await rematchUnmatchedDocuments({}, testPrisma);
+    const { outcomes } = await rematchUnmatchedDocuments({}, testPrisma);
 
     // Examined and left alone, rather than excluded from the query. The distinction
     // matters: the sweep is the only thing that can notice a sender has been registered
@@ -188,8 +189,8 @@ describe('sweep scope', () => {
     await ingestDocument(orphan, testPrisma);
     await testPrisma.transaction.create({ data: lateArrival });
 
-    expect(await rematchUnmatchedDocuments({ clientId: 2 }, testPrisma)).toEqual([]);
-    expect(await rematchUnmatchedDocuments({ clientId: 1 }, testPrisma)).toHaveLength(1);
+    expect((await rematchUnmatchedDocuments({ clientIds: [2] }, testPrisma)).outcomes).toEqual([]);
+    expect((await rematchUnmatchedDocuments({ clientIds: [1] }, testPrisma)).outcomes).toHaveLength(1);
   });
 });
 
@@ -223,26 +224,12 @@ describe('the sweep respects human decisions', () => {
       where: { documentId: result.documentId },
     });
 
-    // Mirrors the body of `rejectMatch` in lib/actions/review.ts, calling the same
-    // slot-claim helper the action calls — the 'use server' module cannot be invoked
-    // from Jest outside a Next request context.
-    await testPrisma.$transaction(async (tx) => {
-      await releaseConfirmedDocumentSlot(tx.transaction, match.transactionId, match.documentId);
-      await tx.documentMatch.update({
-        where: { id: match.id },
-        data: { status: 'REJECTED', decidedBy: 'reviewer', decidedAt: new Date() },
-      });
-      const remaining = await tx.documentMatch.count({
-        where: { documentId: match.documentId, status: 'CANDIDATE' },
-      });
-      await tx.document.update({
-        where: { id: match.documentId },
-        data: {
-          status: remaining > 0 ? 'NEEDS_REVIEW' : 'UNMATCHED',
-          failureReason: remaining > 0 ? null : 'ALL_CANDIDATES_REJECTED',
-        },
-      });
-    });
+    // The real action, not a copy of it. This used to mirror `rejectMatch`'s body
+    // because a 'use server' module could not be driven from Jest; the dispatcher double
+    // in `helpers/next-safe-action.ts` removed that constraint, and the mirror had
+    // already drifted — it did not maintain the charge's cached status, so the sweep it
+    // set up ran against a state the real action never produces.
+    await runAction(rejectMatch, match.id);
 
     const afterReject = await testPrisma.document.findUniqueOrThrow({
       where: { id: result.documentId },
@@ -260,7 +247,7 @@ describe('the sweep respects human decisions', () => {
         transactionAt: new Date('2025-06-20T10:00:00Z'),
       },
     });
-    await rematchUnmatchedDocuments({ clientId: 1 }, testPrisma);
+    await rematchUnmatchedDocuments({ clientIds: [1] }, testPrisma);
 
     const afterSweep = await testPrisma.documentMatch.findUniqueOrThrow({
       where: { id: match.id },
@@ -306,7 +293,7 @@ describe('the sweep respects human decisions', () => {
         transactionAt: new Date('2025-06-19T13:12:00Z'),
       },
     });
-    await rematchUnmatchedDocuments({ clientId: 1 }, testPrisma);
+    await rematchUnmatchedDocuments({ clientIds: [1] }, testPrisma);
 
     const document = await testPrisma.document.findUniqueOrThrow({
       where: { id: result.documentId },

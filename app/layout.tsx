@@ -1,6 +1,7 @@
-import type { Metadata } from "next";
+import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from "next/font/google";
-import "./globals.css";
+import './globals.css';
+import { t } from '@/lib/content/messages';
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -13,9 +14,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Darb · document matching",
-  description:
-    "Receipts and invoices arrive by WhatsApp and email, are extracted by OCR, and are matched to card transactions with an explainable confidence score.",
+  title: t('app.title'),
+  description: t('app.description'),
 };
 
 export default function RootLayout({

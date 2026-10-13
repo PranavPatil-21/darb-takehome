@@ -32,8 +32,14 @@ export function AssuranceActions({
   const [reason, setReason] = useState('');
 
   const pending = uphold.isPending || overturn.isPending;
-  const result = uphold.result.data ?? overturn.result.data;
-  const error = uphold.result.serverError ?? overturn.result.serverError;
+
+  // Whichever action ran last wins. `useAction` results are sticky and neither hook clears
+  // the other, so `uphold ?? overturn` kept showing the sign-off outcome through a
+  // subsequent overturn — the two decisions this control exists to separate.
+  const [lastRun, setLastRun] = useState<'uphold' | 'overturn' | null>(null);
+  const active = lastRun === 'overturn' ? overturn : lastRun === 'uphold' ? uphold : null;
+  const result = active?.result.data;
+  const error = active?.result.serverError;
 
   if (!canSignOff) {
     return (
@@ -64,7 +70,7 @@ export function AssuranceActions({
               size="sm"
               variant="destructive"
               disabled={pending || reason.trim().length < 3}
-              onClick={() => overturn.execute({ matchId, reason })}
+              onClick={() => { setLastRun('overturn'); overturn.execute({ matchId, reason }); }}
             >
               {overturn.isPending ? <Loader2 className="size-4 animate-spin" /> : null}
               Detach it
@@ -77,7 +83,7 @@ export function AssuranceActions({
             size="sm"
             className="h-9"
             disabled={pending}
-            onClick={() => uphold.execute({ matchId })}
+            onClick={() => { setLastRun('uphold'); uphold.execute({ matchId }); }}
           >
             {uphold.isPending ? (
               <Loader2 className="size-4 animate-spin" />
@@ -99,14 +105,21 @@ export function AssuranceActions({
         </div>
       )}
 
+      {/* Same reasoning as the review actions: a sign-off decision has to announce itself. */}
       {result ? (
         <p
-          className={`max-w-xs text-right text-xs ${result.ok ? 'text-muted-foreground' : 'text-rose-600'}`}
+          role="status"
+          aria-live="polite"
+          className={`max-w-xs text-right text-xs ${result.ok ? 'text-muted-foreground' : 'text-rose-600 dark:text-rose-400'}`}
         >
           {result.message}
         </p>
       ) : null}
-      {error ? <p className="max-w-xs text-right text-xs text-rose-600">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="max-w-xs text-right text-xs text-rose-600 dark:text-rose-400">
+          {error}
+        </p>
+      ) : null}
     </div>
   );
 }

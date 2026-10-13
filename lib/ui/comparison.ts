@@ -1,5 +1,6 @@
 import { t } from '@/lib/content/messages';
-import { MAX_DATE_DRIFT_DAYS, VAT_ROUNDING_TOLERANCE_HALALAS } from '@/lib/matching/scoring-config';
+import { VAT_ROUNDING_TOLERANCE_HALALAS } from '@/lib/matching/scoring-config';
+import { maxDateDriftDaysFor } from '@/lib/services/transaction-matcher';
 
 /**
  * The document-versus-charge comparison a reviewer actually makes.
@@ -46,6 +47,15 @@ export interface ComparableDocument {
   currency: string | null;
   documentDate: Date | null;
   cardLast4: string | null;
+  /**
+   * What the document is, and how it arrived. Both optional, and both only used to ask
+   * the engine which date window applies — a supplier invoice is allowed to lag the
+   * charge by far longer than a till receipt. Without them this screen judged every
+   * document by the receipt window and told the reviewer a perfectly ordinary 20-day-old
+   * invoice "differs", on a pairing the engine considered fully inside tolerance.
+   */
+  documentType?: string | null;
+  source?: string | null;
 }
 
 export interface ComparableCharge {
@@ -87,6 +97,27 @@ function compareAmount(doc: ComparableDocument, charge: ComparableCharge): Compa
   }
 
   const documentValue = money(doc.totalAmount, doc.currency ?? charge.currency);
+
+  // Currency before magnitude. Comparing the integers alone reported a 100.00 USD receipt
+  // as agreeing with a 100.00 SAR charge — the two values rendered side by side under a
+  // green verdict, on the screen whose entire job is to stop a wrong attachment. The
+  // matcher already vetoes this pairing; the reviewer's own view must not contradict it.
+  // Normalised on both sides, exactly as the matcher does. Comparing raw strings made
+  // `'sar'` differ from `'SAR'`, so the reviewer's view vetoed a pairing the engine was
+  // happy to auto-attach — the contradiction this gate exists to prevent, inverted.
+  const documentCurrency = doc.currency?.trim().toUpperCase() ?? null;
+  const chargeCurrency = charge.currency.trim().toUpperCase();
+  if (documentCurrency !== null && documentCurrency !== chargeCurrency) {
+    return {
+      field: 'amount',
+      label,
+      documentValue,
+      chargeValue,
+      verdict: 'DIFFERS',
+      note: t('compare.note.currencyMismatch'),
+    };
+  }
+
   const difference = charge.amount - doc.totalAmount;
 
   if (difference === 0) {
@@ -153,9 +184,19 @@ function compareDate(doc: ComparableDocument, charge: ComparableCharge): Compari
     label,
     documentValue: doc.documentDate.toISOString(),
     chargeValue,
-    verdict: days <= MAX_DATE_DRIFT_DAYS ? 'CLOSE' : 'DIFFERS',
+    // The engine's own window for *this* document, not a flat constant. Keeping the two
+    // separate is what stops the UI quietly disagreeing with the matcher it explains.
+    verdict: days <= driftWindowFor(doc) ? 'CLOSE' : 'DIFFERS',
     note: `${days} ${plural} apart. Card settlement routinely lags the receipt.`,
   };
+}
+
+/** The engine's date window for this document, defaulting to the receipt window. */
+function driftWindowFor(doc: ComparableDocument): number {
+  return maxDateDriftDaysFor({
+    documentType: (doc.documentType ?? 'UNKNOWN') as 'RECEIPT' | 'TAX_INVOICE' | 'UNKNOWN',
+    source: (doc.source ?? 'WHATSAPP') as 'EMAIL' | 'WHATSAPP',
+  } as Parameters<typeof maxDateDriftDaysFor>[0]);
 }
 
 function compareCard(doc: ComparableDocument, charge: ComparableCharge): ComparisonRow {
@@ -339,6 +380,93 @@ export function chargeDifferences(
   }
 
   return differences;
+}
+
+export interface ChargeSpread {
+  field: DifferenceField;
+  /** A phrase that fits "they differ only in ___", accurate for these values. */
+  phrase: string;
+  /** Every distinct value present, in candidate order. */
+  values: string[];
+}
+
+/**
+ * What separates a set of competing charges — any number of them.
+ *
+ * The two-charge version below is a special case of this and remains for callers that
+ * genuinely have a pair. This exists because the review screen does not: a chain with
+ * several outlets in one district routinely produces three tied candidates, and the
+ * interface was built around `const [a, b] = charges`, so the third was dropped from the
+ * one screen whose job is to show everything that is competing.
+ *
+ * A field counts as differing if *any* two charges differ on it, and every distinct value
+ * is reported rather than just the first pair — a reviewer deciding between three outlets
+ * needs all three branch numbers, not two of them.
+ */
+export function chargeDifferencesAcross(
+  charges: readonly ComparableCharge[],
+  merchantAlikeness: (left: string, right: string) => number,
+): ChargeSpread[] {
+  if (charges.length < 2) return [];
+
+  const spreads: ChargeSpread[] = [];
+
+  const distinct = <T>(values: T[], key: (value: T) => string): T[] => {
+    const seen = new Set<string>();
+    return values.filter((value) => {
+      const k = key(value);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  };
+
+  const merchants = distinct(
+    charges.map((c) => c.merchantName.trim()),
+    (m) => m,
+  );
+  if (merchants.length > 1) {
+    // "The branch" only if *every* pair reads as the same chain. One unrelated merchant
+    // among three outlets makes the whole set a merchant difference, because telling a
+    // reviewer to check the branch when the names are genuinely different sends them
+    // looking for the wrong thing.
+    const allSameChain = merchants.every((left, i) =>
+      merchants.slice(i + 1).every((right) => merchantAlikeness(left, right) >= 0.6),
+    );
+    spreads.push({
+      field: 'merchant',
+      phrase: allSameChain ? 'the branch' : 'the merchant',
+      values: merchants,
+    });
+  }
+
+  const amounts = distinct([...charges], (c) => `${c.amount}|${c.currency}`);
+  if (amounts.length > 1) {
+    spreads.push({
+      field: 'amount',
+      phrase: 'the amount',
+      values: amounts.map((c) => money(c.amount, c.currency)),
+    });
+  }
+
+  const cards = distinct(charges.map((c) => c.cardLast4), (c) => c);
+  if (cards.length > 1) {
+    spreads.push({ field: 'card', phrase: 'the card', values: cards.map((c) => `•••• ${c}`) });
+  }
+
+  const times = distinct(charges.map((c) => c.transactionAt), (d) => String(d.getTime()));
+  if (times.length > 1) {
+    // Charges minutes apart and charges a week apart are told apart by completely
+    // different evidence, so they do not get the same sentence either.
+    const within = times.every((time) => sameDay(time, times[0]!));
+    spreads.push({
+      field: within ? 'time' : 'date',
+      phrase: within ? 'the time of day' : 'the date',
+      values: times.map((d) => d.toISOString()),
+    });
+  }
+
+  return spreads;
 }
 
 /**

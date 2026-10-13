@@ -141,6 +141,22 @@ export async function resolveActor(): Promise<Actor> {
   }
 }
 
+/**
+ * Writes the development identity cookie.
+ *
+ * Lives here, next to the read, so `next/headers` is touched in exactly one module. The
+ * dev-identity switcher used to import `cookies` directly, which quietly made the rule
+ * stated in docs/ARCHITECTURE.md — "`resolveActor` is the only place that touches
+ * `next/headers`" — untrue, and nothing would have caught it. Both halves of the seam now
+ * sit in one file and the architecture test enforces it.
+ */
+export async function setDevelopmentActorCookie(actorId: string): Promise<void> {
+  const next = actorId === DEVELOPMENT_CHECKER.id ? DEVELOPMENT_CHECKER.id : DEVELOPMENT_ACTOR.id;
+  const { cookies } = await import('next/headers');
+  const store = await cookies();
+  store.set(DEV_ACTOR_COOKIE, next, { httpOnly: true, sameSite: 'lax', path: '/' });
+}
+
 export function can(actor: Actor, capability: Capability): boolean {
   return actor.capabilities.includes(capability);
 }

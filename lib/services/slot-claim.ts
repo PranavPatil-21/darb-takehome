@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { recomputeDocumentationStatus } from '@/lib/services/charge-status';
 
 /**
  * Claiming a transaction's confirmed-document slot.
@@ -28,11 +29,23 @@ export class TransactionAlreadyDocumentedError extends Error {
 
 type TransactionDelegate = Prisma.TransactionClient['transaction'];
 
+/**
+ * The slot and the cached status change together or not at all.
+ *
+ * Both helpers take the delegate rather than the client, which is what kept them narrow —
+ * but the status cache needs the client to re-read the charge's matches. Passing both
+ * keeps the compare-and-set exactly as it was while making it impossible to move the slot
+ * without the column following.
+ */
+type SlotClient = Prisma.TransactionClient;
+
 /** Returns true if the slot is now held by `documentId`. Never overwrites another claim. */
 export async function claimConfirmedDocumentSlot(
   transactions: TransactionDelegate,
   transactionId: number,
   documentId: number,
+  /** Omit only where the caller recomputes the status itself afterwards. */
+  client?: SlotClient,
 ): Promise<boolean> {
   const { count } = await transactions.updateMany({
     where: {
@@ -43,6 +56,8 @@ export async function claimConfirmedDocumentSlot(
     data: { confirmedDocumentId: documentId },
   });
 
+  if (count === 1 && client) await recomputeDocumentationStatus(client, transactionId);
+
   return count === 1;
 }
 
@@ -51,9 +66,12 @@ export async function releaseConfirmedDocumentSlot(
   transactions: TransactionDelegate,
   transactionId: number,
   documentId: number,
+  client?: SlotClient,
 ): Promise<void> {
   await transactions.updateMany({
     where: { id: transactionId, confirmedDocumentId: documentId },
     data: { confirmedDocumentId: null },
   });
+
+  if (client) await recomputeDocumentationStatus(client, transactionId);
 }

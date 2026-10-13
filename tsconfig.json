@@ -9,6 +9,10 @@
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",
@@ -17,6 +21,8 @@
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,
+    // Kept out of the project root; it is a build artifact, not a source file.
+    "tsBuildInfoFile": "./node_modules/.cache/tsconfig.tsbuildinfo",
     "plugins": [
       {
         "name": "next"
@@ -31,10 +37,11 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
+    ".next-alt/types/**/*.ts",
     ".next-build/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts",
-    ".next-alt/types/**/*.ts"
+    ".next-audit/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

@@ -1,18 +1,30 @@
 /**
  * Where a charge stands on documentation.
  *
- * `Transaction` has no status column, and deliberately still does not get one. The truth
- * is already in the data — a charge is documented when `confirmedDocumentId` points at a
- * document, and that column is the same one the compare-and-set slot claim writes under a
- * unique constraint. A denormalised status column would be a second copy of that fact,
- * maintained by application code, free to drift from it; and the moment the two disagree,
- * the UI confidently shows a figure that is wrong. So the status is derived, here, in one
- * pure function.
+ * This function is the definition of truth. A charge is documented when
+ * `confirmedDocumentId` points at a document — the same column the compare-and-set slot
+ * claim writes under a unique constraint — and the rest follows from the candidate
+ * matches. One pure function, no I/O, total over its inputs.
  *
- * Derivation has a cost: it needs the candidate matches loaded alongside the charge, and
- * it cannot be filtered on in SQL without a join. At the scale where that hurts, the right
- * answer is a materialised view or a maintained column with a reconciliation job — not a
- * column written by hand from four call sites, which is how the drift starts.
+ * **`Transaction.documentationStatus` now caches it, and this comment used to argue it
+ * never should.** The argument was right about the danger and right about the remedy:
+ * derivation cannot be filtered or counted in SQL, so the register had to load every
+ * charge *and its matches* into Node to tally four numbers, and the stated condition for
+ * materialising it was "a maintained column with a reconciliation job — not a column
+ * written by hand from four call sites, which is how the drift starts."
+ *
+ * That condition is met, and it is worth being specific about how, because the warning
+ * stands for anyone tempted to write to the column directly:
+ *
+ *  - `recomputeDocumentationStatus` is the only writer, and it calls *this* function
+ *    rather than restating the rule. There is no second copy of the logic to drift.
+ *  - Every write path that can change the inputs goes through it, inside the same
+ *    database transaction as the change itself.
+ *  - `expectStatusesConsistent` re-derives every charge in the database and runs after
+ *    *every* test in the suite, not in one dedicated test — so a future write path that
+ *    forgets to recompute fails somebody else's test rather than shipping.
+ *
+ * The reconciliation job the comment asked for is `scripts/backfill-status.ts`.
  */
 
 import { ageLabel, chargeStatusHint, chargeStatusLabel } from '@/lib/content/messages';
@@ -164,4 +176,42 @@ export const AGE_BUCKET_LABEL: Readonly<Record<AgeBucket, string>> = {
 export function ageingReference(periodEnd: Date | null, now: Date): Date {
   if (periodEnd === null) return now;
   return periodEnd < now ? periodEnd : now;
+}
+
+/**
+ * The `transactionAt` range that produces a given age bucket, as of a reference date.
+ *
+ * Age is a function of *now*, so it can never be stored — but it is a monotonic function
+ * of `transactionAt`, which means filtering by it is a range query on a column that is
+ * already indexed. This is what lets the register ask the database for "charges between
+ * one and four weeks old" instead of loading every charge to compute each one's age in
+ * JavaScript and then discarding most of them.
+ *
+ * Returned as a Prisma-shaped filter so the inversion of the comparison — older charges
+ * have *smaller* timestamps — lives here once rather than at each call site, where
+ * getting it backwards would silently return the wrong half of the register.
+ */
+export function ageBucketRange(bucket: AgeBucket, asOf: Date): { gt?: Date; lte?: Date } {
+  const MS_PER_DAY = 86_400_000;
+  const at = (days: number) => new Date(asOf.getTime() - days * MS_PER_DAY);
+
+  // `daysUndocumented` *floors* the elapsed days, so age <= 7 means the gap is strictly
+  // less than eight days — the lower edge is exclusive, not inclusive. Getting that
+  // backwards moves every charge sitting exactly on a day boundary into the neighbouring
+  // bucket, which is both wrong and almost invisible. `age-range.test.ts` checks the two
+  // definitions against each other either side of every boundary for this reason.
+  //
+  // The newest bucket has no upper bound: the day count clamps negatives to zero, so a
+  // charge posted ahead of the reference date is age 0, and bounding at `asOf` would drop
+  // it from the register entirely.
+  switch (bucket) {
+    case '0-7':
+      return { gt: at(8) };
+    case '8-30':
+      return { gt: at(31), lte: at(8) };
+    case '31-60':
+      return { gt: at(61), lte: at(31) };
+    case '60+':
+      return { lte: at(61) };
+  }
 }

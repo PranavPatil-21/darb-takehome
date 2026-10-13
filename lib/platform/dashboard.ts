@@ -1,12 +1,13 @@
 import type { PrismaClient } from '@prisma/client';
 import prismaDefault from '@/lib/prisma';
 import { clientScopeFilter, type Actor } from '@/lib/platform/identity';
+import { decodeDocumentationStatus } from '@/lib/domain/enums';
+import { getWorkCounts } from '@/lib/platform/work-queue';
 import { vatWithin, periodOf } from '@/lib/ui/coverage';
 import {
-  ageBucket,
+  ageBucketRange,
   ageingReference,
   daysUndocumented,
-  documentationStatusOf,
   type AgeBucket,
   type TransactionDocumentationStatus,
 } from '@/lib/platform/transaction-status';
@@ -54,7 +55,8 @@ export interface DashboardData {
   /** Work waiting on a person, split by whose desk it is. */
   awaitingDecision: number;
   awaitingVerification: number;
-  exceptions: number;
+  /** Waiting, but not on a confirm/reject — these need a different kind of fix. */
+  blocked: number;
 
   /** How the engine is performing — the number that detects a silent regression. */
   documentsProcessed: number;
@@ -72,19 +74,32 @@ export async function getDashboard(
 ): Promise<DashboardData> {
   const scope = clientScopeFilter(actor);
 
-  const [charges, documents, awaitingDecision, awaitingVerification, exceptions, oldestWaiting] =
+  // The newest charge fixes the reporting period, and the period fixes the ageing
+  // reference. One indexed read instead of scanning every charge for a maximum.
+  const newest = await prisma.transaction.findFirst({
+    where: scope,
+    orderBy: { transactionAt: 'desc' },
+    select: { transactionAt: true },
+  });
+  const period = periodOf(newest?.transactionAt ?? null);
+  const asOf = ageingReference(period?.to ?? null, now);
+
+  const ORDERED_BUCKETS: AgeBucket[] = ['0-7', '8-30', '31-60', '60+'];
+
+  const [statusTotals, documents, work, awaitingVerification, oldestWaiting, ageingTotals] =
     await Promise.all([
-      prisma.transaction.findMany({
+      // Count and value per status in one grouping, rather than loading every charge and
+      // its matches into Node to add them up. This is what the stored status bought.
+      prisma.transaction.groupBy({
+        by: ['documentationStatus'],
         where: scope,
-        select: {
-          amount: true,
-          transactionAt: true,
-          confirmedDocumentId: true,
-          documents: { select: { status: true } },
-        },
+        _count: true,
+        _sum: { amount: true },
       }),
       prisma.document.count({ where: scope }),
-      prisma.document.count({ where: { ...scope, status: 'NEEDS_REVIEW' } }),
+      // Both numbers from the one taxonomy the queue is built from, so the figure on the
+      // overview and the rows behind it cannot drift apart.
+      getWorkCounts(actor, prisma),
       prisma.documentMatch.count({
         where: {
           status: { in: ['CONFIRMED', 'AUTO_CONFIRMED'] },
@@ -93,62 +108,49 @@ export async function getDashboard(
           document: scope,
         },
       }),
-      prisma.document.count({
-        where: {
-          OR: [{ status: 'FAILED' }, { status: 'UNMATCHED', clientId: null }],
-          ...scope,
-        },
-      }),
+      // Oldest across everything still waiting, not just what is decidable. The figure
+      // answers "how long has something been sitting here", and a document nobody can
+      // decide has been sitting there just the same.
       prisma.document.findFirst({
-        where: { ...scope, status: 'NEEDS_REVIEW' },
+        where: { ...scope, status: { in: ['NEEDS_REVIEW', 'UNMATCHED', 'FAILED'] } },
         orderBy: { receivedAt: 'asc' },
         select: { receivedAt: true },
       }),
+      // One aggregate per ageing band, each an indexed range on `transactionAt`. Four
+      // small queries beat one unbounded scan, and they run concurrently.
+      Promise.all(
+        ORDERED_BUCKETS.map(async (bucket) => ({
+          bucket,
+          ...(await prisma.transaction.aggregate({
+            where: {
+              ...scope,
+              // Ageing describes the gap, so only undocumented charges enter it.
+              // Including settled ones would make the oldest bucket grow forever.
+              documentationStatus: { not: 'DOCUMENTED' },
+              transactionAt: ageBucketRange(bucket, asOf),
+            },
+            _count: true,
+            _sum: { amount: true },
+          })),
+        })),
+      ),
     ]);
 
   const autoAttached = await prisma.documentMatch.count({
     where: { status: 'AUTO_CONFIRMED', document: scope },
   });
 
-  const statusTotals = new Map<TransactionDocumentationStatus, { count: number; value: number }>();
-  const ageingTotals = new Map<AgeBucket, { count: number; value: number }>();
-
-  let totalSpend = 0;
-  let documentedSpend = 0;
-  let latest: Date | null = null;
-
-  for (const charge of charges) {
-    if (latest === null || charge.transactionAt > latest) latest = charge.transactionAt;
+  const byStatusTotals = new Map<TransactionDocumentationStatus, { count: number; value: number }>();
+  for (const row of statusTotals) {
+    byStatusTotals.set(decodeDocumentationStatus(row.documentationStatus), {
+      count: row._count,
+      value: row._sum.amount ?? 0,
+    });
   }
 
-  const period = periodOf(latest);
-  const asOf = ageingReference(period?.to ?? null, now);
-
-  for (const charge of charges) {
-    totalSpend += charge.amount;
-
-    const status = documentationStatusOf({
-      confirmedDocumentId: charge.confirmedDocumentId,
-      matches: charge.documents,
-    });
-
-    const bucketForStatus = statusTotals.get(status) ?? { count: 0, value: 0 };
-    statusTotals.set(status, {
-      count: bucketForStatus.count + 1,
-      value: bucketForStatus.value + charge.amount,
-    });
-
-    if (status === 'DOCUMENTED') {
-      documentedSpend += charge.amount;
-      continue;
-    }
-
-    // Ageing describes the gap, so only undocumented charges enter it. Including settled
-    // ones would make the oldest bucket grow forever and stop meaning anything.
-    const bucket = ageBucket(daysUndocumented(charge.transactionAt, asOf));
-    const ageRow = ageingTotals.get(bucket) ?? { count: 0, value: 0 };
-    ageingTotals.set(bucket, { count: ageRow.count + 1, value: ageRow.value + charge.amount });
-  }
+  const chargeCount = statusTotals.reduce((sum, row) => sum + row._count, 0);
+  const totalSpend = statusTotals.reduce((sum, row) => sum + (row._sum.amount ?? 0), 0);
+  const documentedSpend = byStatusTotals.get('DOCUMENTED')?.value ?? 0;
 
   const undocumentedSpend = totalSpend - documentedSpend;
 
@@ -158,11 +160,10 @@ export async function getDashboard(
     'REJECTED',
     'DOCUMENTED',
   ];
-  const ORDERED_BUCKETS: AgeBucket[] = ['0-7', '8-30', '31-60', '60+'];
 
   return {
     period,
-    chargeCount: charges.length,
+    chargeCount,
     totalSpend,
     documentedSpend,
     undocumentedSpend,
@@ -173,25 +174,30 @@ export async function getDashboard(
     // makes "no charges are in review" look identical to "we stopped tracking that".
     byStatus: ORDERED_STATUSES.map((status) => ({
       status,
-      count: statusTotals.get(status)?.count ?? 0,
-      value: statusTotals.get(status)?.value ?? 0,
+      count: byStatusTotals.get(status)?.count ?? 0,
+      value: byStatusTotals.get(status)?.value ?? 0,
     })),
-    ageing: ORDERED_BUCKETS.map((bucket) => ({
-      bucket,
-      count: ageingTotals.get(bucket)?.count ?? 0,
-      value: ageingTotals.get(bucket)?.value ?? 0,
+    ageing: ageingTotals.map((row) => ({
+      bucket: row.bucket,
+      count: row._count,
+      value: row._sum.amount ?? 0,
     })),
 
-    awaitingDecision,
+    awaitingDecision: work.decidable,
     awaitingVerification,
-    exceptions,
+    blocked: work.blocked,
 
     documentsProcessed: documents,
     autoAttached,
     autoAttachRate: documents === 0 ? 0 : autoAttached / documents,
 
+    // Against `now`, not `asOf`. `asOf` is the end of the period the *charge* data covers
+    // — freezing a closed month so it stops ageing — and a document's wait has nothing to
+    // do with it. A receipt that arrived in September measured against a June reference
+    // produced a negative gap, which the clamp turned into zero: the one figure whose job
+    // is to surface a stalled pipeline read "< 1 day" after a month of silence.
     oldestWaitingDays: oldestWaiting
-      ? daysUndocumented(oldestWaiting.receivedAt, asOf)
+      ? daysUndocumented(oldestWaiting.receivedAt, now)
       : null,
   };
 }

@@ -26,9 +26,9 @@ export function FilterChips({
   query,
 }: {
   counts: Record<TransactionDocumentationStatus, number>;
-  activeStatus?: TransactionDocumentationStatus;
-  activeAge?: AgeBucket;
-  query?: string;
+  activeStatus?: TransactionDocumentationStatus | undefined;
+  activeAge?: AgeBucket | undefined;
+  query?: string | undefined;
 }) {
   const href = (status?: TransactionDocumentationStatus) => {
     const params = new URLSearchParams();
@@ -71,11 +71,11 @@ function Chip({
       href={href}
       aria-current={active ? 'true' : undefined}
       className={cn(
-        'inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-xs transition-colors',
+        'inline-flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs transition-colors',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         active
-          ? 'border-foreground bg-foreground text-background'
-          : 'border-border text-muted-foreground hover:text-foreground',
+          ? 'border-foreground bg-foreground font-medium text-background shadow-xs'
+          : 'border-border bg-card text-muted-foreground shadow-xs hover:bg-accent hover:text-foreground',
       )}
     >
       {label}

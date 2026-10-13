@@ -2,7 +2,7 @@ import { formatDay, formatMinorUnits } from '@/lib/format';
 import { nextStepText, reasonText, t } from '@/lib/content/messages';
 import { SOURCE_LABEL } from '@/lib/ui/vocabulary';
 import type { ComparableCharge } from '@/lib/ui/comparison';
-import { AmbiguityCallout } from '@/components/review/ambiguity-callout';
+import { CandidateComparison } from '@/components/review/candidate-comparison';
 import { CandidateCard, type CandidateCharge } from '@/components/review/candidate-card';
 import { RawTextPanel } from '@/components/review/raw-text-panel';
 
@@ -24,6 +24,8 @@ export interface FocusedDocumentData {
   currency: string | null;
   documentDate: Date | null;
   cardLast4: string | null;
+  /** Drives the date verdict's window — an invoice is allowed to lag further than a receipt. */
+  documentType: string | null;
   vatNumber: string | null;
   rawText: string | null;
   failureReason: string | null;
@@ -34,9 +36,15 @@ export interface FocusedDocumentData {
 export function FocusedDocument({
   document,
   candidates,
+  decidable,
+  nextStep,
 }: {
   document: FocusedDocumentData;
   candidates: CandidateCharge[];
+  /** Whether confirm/reject can settle this document at all. */
+  decidable: boolean;
+  /** What to do instead, when it cannot. */
+  nextStep: string;
 }) {
   const reason = document.failureReason;
   const ambiguous = reason === 'AMBIGUOUS_TOP_CANDIDATES';
@@ -54,58 +62,88 @@ export function FocusedDocument({
     // receipt block below therefore pushed the whole column past the viewport and the
     // page scrolled sideways on a phone. Without this, no amount of wrapping inside the
     // children fixes it.
-    <article className="min-w-0">
-      <header>
-        <h2 className="text-xl font-semibold tracking-tight">
+    <article className="min-w-0 space-y-4">
+      {/* The document's own identity: one card, so the header stops floating against the
+          page and reads as the subject of everything below it. */}
+      <header className="rounded-xl border bg-card p-5 shadow-xs">
+        <h2 className="text-xl font-semibold tracking-[-0.011em]">
           {document.merchantName ?? t('common.unreadableReceipt')}
         </h2>
 
-        <p className="mt-1 text-sm text-muted-foreground tabular-nums">
-          {formatMinorUnits(document.totalAmount, document.currency ?? 'SAR')} ·{' '}
-          {formatDay(document.documentDate)} ·{' '}
-          {document.cardLast4 ? `card ••••${document.cardLast4}` : 'no card number read'}
+        <p className="mt-1.5 text-sm tabular-nums">
+          <span className="font-medium">
+            {formatMinorUnits(document.totalAmount, document.currency ?? 'SAR')}
+          </span>
+          <span className="text-muted-foreground">
+            {' · '}
+            {formatDay(document.documentDate)}
+            {' · '}
+            {document.cardLast4 ? `card ••••${document.cardLast4}` : 'no card number read'}
+          </span>
         </p>
 
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {SOURCE_LABEL[document.source] ?? document.source}
-          {document.senderLabel ? ` · ${document.senderLabel}` : ''} · received{' '}
-          {formatDay(document.receivedAt)}
-        </p>
-
-        {/* The field that decides whether this document is usable for a VAT filing at
-            all. Stated as an observation about the document; whether that makes the tax
-            recoverable is a question for the operator's accountant, not for this UI. */}
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          {document.vatNumber
-            ? `VAT number ${document.vatNumber}`
-            : t('review.vat.absent')}
-        </p>
+        <dl className="mt-4 grid gap-x-6 gap-y-2 border-t pt-3 text-xs sm:grid-cols-3">
+          <div>
+            <dt className="text-muted-foreground">Arrived by</dt>
+            <dd className="mt-0.5">
+              {SOURCE_LABEL[document.source] ?? document.source}
+              {document.senderLabel ? ` · ${document.senderLabel}` : ''}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Received</dt>
+            <dd className="mt-0.5 tabular-nums">{formatDay(document.receivedAt)}</dd>
+          </div>
+          <div>
+            {/* The field that decides whether this document is usable for a VAT filing at
+                all. Stated as an observation about the document; whether that makes the
+                tax recoverable is a question for the operator's accountant, not this UI. */}
+            <dt className="text-muted-foreground">VAT number</dt>
+            <dd className="mt-0.5 tabular-nums">
+              {document.vatNumber ?? <span className="text-muted-foreground">Not printed</span>}
+            </dd>
+          </div>
+        </dl>
       </header>
 
       {reason ? (
-        <section className="mt-4 border-l-2 border-amber-400 pl-3">
-          <p className="text-sm font-medium">{reasonText(reason)}</p>
+        <section className="rounded-xl border border-attention-border/60 bg-attention p-5 text-attention-foreground shadow-xs">
+          <h3 className="text-sm font-semibold">{reasonText(reason)}</h3>
           {nextStepText(reason) ? (
-            <p className="mt-1 text-sm text-muted-foreground">{nextStepText(reason)}</p>
+            <p className="mt-1.5 text-sm leading-relaxed opacity-90">{nextStepText(reason)}</p>
           ) : null}
         </section>
       ) : null}
 
       <RawTextPanel text={document.rawText} source={document.source} />
 
-      {ambiguous ? <AmbiguityCallout charges={charges} /> : null}
+      {/* Shown for any document with more than one charge in play, not only the ones the
+          engine called ambiguous: "what is actually different between these?" is the same
+          question whichever reason code brought the reviewer here. */}
+      <CandidateComparison charges={charges} tied={ambiguous} />
 
-      <section className="mt-6">
-        <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {t(candidates.length === 1 ? 'review.candidates.one' : 'review.candidates.many')}
+      <section className="pt-2">
+        <h3 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+          {t(
+            !decidable
+              ? 'review.candidates.blocked'
+              : candidates.length === 1
+                ? 'review.candidates.one'
+                : 'review.candidates.many',
+          )}
         </h3>
 
         {candidates.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">
-            Every candidate has been decided. This document leaves the queue on refresh.
+          <p className="rounded-xl border border-dashed bg-card px-5 py-8 text-center text-sm leading-relaxed text-muted-foreground">
+            {/* Two genuinely different situations. A decidable document with no candidates
+                left has just been worked; an undecidable one never had any, and telling
+                its reader to refresh would be an interface inventing progress. */}
+            {decidable
+              ? 'Every candidate has been decided. This document leaves the queue on refresh.'
+              : nextStep}
           </p>
         ) : (
-          <div className="mt-3 space-y-6">
+          <div className="space-y-4">
             {candidates.map((candidate, index) => (
               <CandidateCard
                 key={candidate.matchId}
@@ -116,7 +154,6 @@ export function FocusedDocument({
                 // on an ambiguous document a "1" would be the interface asserting a
                 // preference the matcher explicitly refused to express.
                 showRank={!ambiguous}
-                documentId={document.id}
               />
             ))}
           </div>

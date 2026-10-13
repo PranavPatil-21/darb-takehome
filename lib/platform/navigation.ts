@@ -20,27 +20,33 @@ export interface NavItem {
   /** Hidden from actors lacking this. Undefined means everyone who can see the module. */
   requires?: Capability;
   /** Which badge count, if any, belongs beside it. */
-  badge?: 'review' | 'assurance' | 'exceptions';
+  badge?: 'review' | 'assurance';
   /** One line, for a title attribute and for the mobile menu. */
   hint: string;
 }
 
-export const NAV_ITEMS: readonly NavItem[] = [
+/** A nav row before its href is resolved against the host's mount point. */
+interface NavEntry extends Omit<NavItem, 'href'> {
+  /** Path below the module root; `undefined` is the root itself. */
+  segment: string | undefined;
+}
+
+const NAV_ITEMS: readonly NavEntry[] = [
   {
     label: 'Overview',
-    href: modulePath(),
+    segment: undefined,
     hint: t('nav.overview.hint'),
   },
   {
     label: 'Review',
-    href: modulePath('review'),
+    segment: 'review',
     requires: 'decide',
     badge: 'review',
     hint: t('nav.review.hint'),
   },
   {
     label: 'Assurance',
-    href: modulePath('assurance'),
+    segment: 'assurance',
     requires: 'verify',
     // Both queues appear for anyone who works them. Hiding Assurance from a person who
     // attaches receipts implied the two are different jobs; they are the same job, and the
@@ -50,28 +56,29 @@ export const NAV_ITEMS: readonly NavItem[] = [
   },
   {
     label: 'Charges',
-    href: modulePath('transactions'),
+    segment: 'transactions',
     hint: t('nav.charges.hint'),
   },
   {
     label: 'Documents',
-    href: modulePath('documents'),
+    segment: 'documents',
     hint: t('nav.documents.hint'),
-  },
-  {
-    label: 'Exceptions',
-    href: modulePath('exceptions'),
-    badge: 'exceptions',
-    hint: t('nav.exceptions.hint'),
   },
 ];
 
 export function visibleNavItems(actor: Actor): NavItem[] {
-  // Rebuilt per call rather than memoised: `modulePath` reads live configuration, and a
-  // module whose links were frozen at import time would point at the wrong base path for
-  // any host that configured it after the module was first touched.
-  return NAV_ITEMS.map((item) => ({ ...item, href: item.href })).filter(
-    (item) => item.requires === undefined || can(actor, item.requires),
+  // The table below stores a path *segment*, not a finished href, and `modulePath` is
+  // called here — once per invocation, against live configuration.
+  //
+  // It used to store the finished href and "rebuild" it with `{ ...item, href: item.href }`,
+  // which copies a string computed at module-import time. `moduleConfig()` memoises on
+  // first read, so importing this file before the host called `configureModule` froze the
+  // base path permanently. The map read as a fix and was dead work.
+  return NAV_ITEMS.filter((item) => item.requires === undefined || can(actor, item.requires)).map(
+    ({ segment, ...item }) => ({
+      ...item,
+      href: segment === undefined ? modulePath() : modulePath(segment),
+    }),
   );
 }
 

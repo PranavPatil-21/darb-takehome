@@ -1,7 +1,7 @@
 import { confirmMatch, rejectMatch } from '@/lib/actions/review';
 import { upholdAttachment, overturnAttachment } from '@/lib/actions/assurance';
 import { resetActorResolver, setActorResolver, type Actor } from '@/lib/platform/identity';
-import { resetDatabase, seedMinimalWorld, testPrisma } from './helpers/db';
+import { resetDatabase, seedMinimalWorld, syncChargeStatuses, testPrisma } from './helpers/db';
 
 /**
  * A refusal is not an error.
@@ -132,6 +132,16 @@ describe('segregation of duties is refused, not thrown', () => {
         signals: '{}',
       },
     });
+    // The confirmed match and the slot that mirrors it are written together, because a
+    // confirmation in production always claims the slot. Writing only one side produces a
+    // state no write path can reach, and the global slot-agreement invariant rejects it.
+    await testPrisma.transaction.update({
+      where: { id: transaction.id },
+      data: { confirmedDocumentId: document.id },
+    });
+    // Fixtures written directly bypass the write paths that maintain the cache, so it is
+    // brought back in line the way a backfill would.
+    await syncChargeStatuses();
 
     setActorResolver(async () => CHECKER);
     const result = await upholdAttachment({ matchId: match.id });

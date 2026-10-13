@@ -33,6 +33,9 @@ export interface CandidateDocument {
   currency: string | null;
   documentDate: Date | null;
   cardLast4: string | null;
+  /** Passed through so the date verdict uses the engine's window for this document type. */
+  documentType: string | null;
+  source: string | null;
 }
 
 /**
@@ -58,13 +61,11 @@ export function CandidateCard({
   rank,
   /** Suppressed when the engine itself could not separate the candidates. */
   showRank,
-  documentId,
 }: {
   candidate: CandidateCharge;
   document: CandidateDocument;
   rank: number;
   showRank: boolean;
-  documentId: number;
 }) {
   const rows = buildComparison(document, candidate);
 
@@ -75,42 +76,45 @@ export function CandidateCard({
   return (
     <article
       className={cn(
-        'rounded-lg border bg-card p-4',
+        'overflow-hidden rounded-xl border bg-card shadow-xs',
         // The leading candidate is lifted only when leading means something. On an
         // ambiguous document the engine declined to choose, and emphasising one of two
         // indistinguishable charges is the interface placing a bet with someone's money.
-        showRank && rank === 1 && 'border-foreground/15 shadow-sm',
+        showRank && rank === 1 && 'border-foreground/20 shadow-sm',
       )}
     >
-      <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+      <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1 border-b bg-surface-sunken px-5 py-3.5">
         <div className="min-w-0 flex-1">
-          <h4 className="flex items-baseline gap-2 text-base font-medium">
+          <h4 className="flex items-baseline gap-2 text-sm font-semibold">
             {showRank ? (
-              <span className="text-xs text-muted-foreground tabular-nums">{rank}</span>
+              <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-md bg-card text-[11px] font-medium tabular-nums text-muted-foreground ring-1 ring-inset ring-border">
+                {rank}
+              </span>
             ) : null}
             <span className="min-w-0 truncate">{candidate.merchantName}</span>
           </h4>
-          <p className="mt-0.5 text-xs text-muted-foreground tabular-nums">
+          <p className="mt-1 text-xs text-muted-foreground tabular-nums">
             {formatDay(candidate.transactionAt)} · {formatTime(candidate.transactionAt)} · card
             ••••{candidate.cardLast4}
           </p>
         </div>
 
-        <p className="text-sm tabular-nums text-muted-foreground">
+        <p className="shrink-0 text-xs font-medium tabular-nums text-muted-foreground">
           {formatPercent(candidate.confidence)} match
         </p>
       </header>
 
-      <div className="mt-3">
+      <div className="px-5 py-4">
         <ComparisonTable rows={rows} formatValue={presentValue} />
+        <EngineDisclosure signals={decodeSignals(candidate.signals)} />
       </div>
 
-      <EngineDisclosure signals={decodeSignals(candidate.signals)} />
-
-      <div className="mt-4 flex justify-end">
+      {/* The decision sits in its own footer band, pinned to the bottom of the charge it
+          decides. Floating it in the body made it ambiguous which of two stacked
+          candidates a button belonged to. */}
+      <div className="flex justify-end border-t bg-surface-sunken px-5 py-3">
         <MatchActions
           matchId={candidate.matchId}
-          documentId={documentId}
           chargeLabel={chargeLabel}
         />
       </div>

@@ -1,5 +1,5 @@
 import { getCoveragePosition, periodOf, vatWithin, VAT_RATE } from '@/lib/ui/coverage';
-import { resetDatabase, seedMinimalWorld, testPrisma } from './helpers/db';
+import { resetDatabase, seedMinimalWorld, testPrisma , syncChargeStatuses } from './helpers/db';
 
 /**
  * The compliance position shown on the front page.
@@ -95,10 +95,27 @@ describe('the coverage position', () => {
         status: 'MATCHED',
       },
     });
+    // The slot *and* the match it mirrors. Writing only the slot produces a state no
+    // write path can reach — the registers read `DocumentMatch.status` as the fact — and
+    // the global slot-agreement invariant rejects it, correctly.
+    await testPrisma.documentMatch.create({
+      data: {
+        documentId: document.id,
+        transactionId: 101,
+        confidence: 0.97,
+        signals: '{}',
+        status: 'AUTO_CONFIRMED',
+        decidedBy: 'system',
+        decidedAt: new Date(),
+      },
+    });
     await testPrisma.transaction.update({
       where: { id: 101 },
       data: { confirmedDocumentId: document.id },
     });
+    // Written directly rather than through `confirmMatch`, so the cached status has to
+    // be brought back in line the same way a backfill would.
+    await syncChargeStatuses();
 
     const position = await getCoveragePosition(testPrisma);
 

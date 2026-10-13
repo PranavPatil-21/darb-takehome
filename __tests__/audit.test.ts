@@ -61,7 +61,7 @@ describe('what the system does for itself', () => {
     // merchant normalisation improves. The trail has to show what was on screen at the
     // time, not what the engine would say today.
     const result = await ingest('whatsapp-alfanar-exact');
-    const [event] = await documentHistory(result.documentId, testPrisma);
+    const event = (await documentHistory(result.documentId, testPrisma))[0]!;
 
     const match = await testPrisma.documentMatch.findFirstOrThrow({
       where: { documentId: result.documentId },
@@ -99,7 +99,7 @@ describe('the trail as a narrative', () => {
     const history = await documentHistory(result.documentId, testPrisma);
 
     expect(history.map((e) => e.action)).toEqual(['AUTO_MATCHED', 'REJECTED', 'VERIFIED']);
-    expect(history[2].note).toBe('Checked against the paper receipt.');
+    expect(history[2]!.note).toBe('Checked against the paper receipt.');
   });
 
   it('keeps every event rather than replacing the previous one', async () => {
@@ -139,7 +139,7 @@ describe('what the trail survives', () => {
     // retention policy long after the trail must still read sensibly, and an event that
     // disappears with its transaction defeats the point of keeping one.
     const result = await ingest('whatsapp-alfanar-exact');
-    const [event] = await documentHistory(result.documentId, testPrisma);
+    const event = (await documentHistory(result.documentId, testPrisma))[0]!;
     const transactionId = event.transactionId!;
 
     expect(transactionId).not.toBeNull();
@@ -153,6 +153,6 @@ describe('what the trail survives', () => {
 
     const after = await documentHistory(result.documentId, testPrisma);
     expect(after).toHaveLength(1);
-    expect(after[0].transactionId).toBe(transactionId);
+    expect(after[0]!.transactionId).toBe(transactionId);
   });
 });

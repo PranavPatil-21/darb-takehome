@@ -61,11 +61,14 @@ const STANCE_FOR: Readonly<Record<DocumentStatus, DocumentStance>> = {
 
 export function presentStatus(status: string): StatusPresentation {
   // A status the application does not recognise is a data problem, not a reason to crash
-  // a page or render a raw constant at someone.
+  // a page — but it must not be painted as finished either. `settled` is the emerald
+  // "nothing to do" palette, so an unreadable value was rendered as resolved and dropped
+  // out of a reviewer's attention entirely. `waiting` fails in the direction that gets it
+  // looked at, which is the same polarity `lib/domain/enums.ts` applies on the way in.
   return {
     label: docStatusLabel(status),
     hint: docStatusHint(status),
-    stance: STANCE_FOR[status as DocumentStatus] ?? 'settled',
+    stance: STANCE_FOR[status as DocumentStatus] ?? 'waiting',
   };
 }
 

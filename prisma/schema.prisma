@@ -77,8 +77,23 @@ model Transaction {
   /// candidate pairings for this transaction, not Document rows directly.
   documents DocumentMatch[]
 
+  /// DOCUMENTED | IN_REVIEW | REJECTED | MISSING — a cache of `documentationStatusOf`.
+  ///
+  /// The derivation reads `confirmedDocumentId` plus every match on the charge, which is
+  /// correct and unindexable: a status computed in Node cannot appear in a WHERE or a
+  /// COUNT, so the register had to load every charge *and its matches* just to filter or
+  /// tally them. Storing it turns those into indexed queries.
+  ///
+  /// `documentationStatusOf` remains the definition of truth. This column is only ever
+  /// written by `recomputeDocumentationStatus`, which calls that function — the rule is
+  /// not duplicated — and `expectStatusesConsistent` re-derives every row in the test
+  /// suite to prove the two cannot diverge.
+  documentationStatus String @default("MISSING")
+
   @@index([clientId, transactionAt])
   @@index([driverPhone, transactionAt])
+  @@index([clientId, documentationStatus])
+  @@index([clientId, documentationStatus, transactionAt])
 }
 
 model Document {
@@ -119,7 +134,6 @@ model Document {
 
   matches                 DocumentMatch[]
   confirmedForTransaction Transaction?    @relation("ConfirmedDocument")
-  events                  ReviewEvent[]
 
   @@index([status])
 }
@@ -143,8 +157,9 @@ model DocumentMatch {
   createdAt     DateTime    @default(now())
 
   /// --- Maker-checker ------------------------------------------------------------
-  /// All three are nullable and default to the inert value, so a deployment with the
-  /// control switched off behaves exactly as it did before these columns existed.
+  /// Six columns. Five are nullable and `verificationRequired` defaults to false, so a
+  /// deployment with the control switched off behaves exactly as it did before these
+  /// columns existed — the inertness rests on that default, not on nullability.
 
   /// Whether this attachment was selected for independent sign-off. Decided once, when
   /// the attachment is made, rather than evaluated at read time: a sampling rule that is
@@ -179,11 +194,17 @@ model DocumentMatch {
 /// and four events here.
 ///
 /// Nothing updates or deletes a row in this table. SQLite cannot express append-only, so
-/// that is a property of the code: `recordEvent` is the only write path.
+/// that is a property of the code: `recordEvent` is the only write path — and of the
+/// schema, in that no relation can cascade a delete into it.
 model ReviewEvent {
-  id         Int      @id @default(autoincrement())
+  id Int @id @default(autoincrement())
+
+  /// The document involved. Deliberately **not** a foreign key, for the same reason as
+  /// `transactionId` below — and this column used to be one, with `onDelete: Cascade`,
+  /// which meant deleting a document silently destroyed its entire history. A trail that
+  /// disappears with the thing it describes is not an audit trail, and the contradiction
+  /// sat two lines from the paragraph arguing the opposite case for the charge.
   documentId Int
-  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   /// The charge involved, when the event concerns one. Deliberately not a foreign key: a
   /// charge may be purged under a retention policy long after the audit trail must still
@@ -210,4 +231,27 @@ model ReviewEvent {
   @@index([documentId, createdAt])
   @@index([transactionId])
   @@index([actorId, createdAt])
+}
+
+/// Idempotency record for transaction-batch ingestion.
+///
+/// `POST /api/transactions` creates financial resources, which the org standard says must
+/// accept an `Idempotency-Key`. It is also the endpoint whose response the caller is most
+/// likely to miss — the re-match sweep runs before it answers — so a timeout followed by a
+/// retry is the expected case, not an exotic one. Without this, that retry silently
+/// doubles the charges, and two identical same-day same-merchant transactions is the
+/// system's own definition of an ambiguous match: the duplicate manufactures review work.
+///
+/// The key is stored with the caller's scope prefixed, so two callers cannot collide on a
+/// well-meaning value like "batch-1".
+model TransactionBatch {
+  id             Int      @id @default(autoincrement())
+  /// `{callerId}:{idempotencyKey}`.
+  idempotencyKey String   @unique
+  /// JSON array of the transaction ids this batch created, so a replay can answer with
+  /// the original result rather than an empty one.
+  transactionIds String
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
 }

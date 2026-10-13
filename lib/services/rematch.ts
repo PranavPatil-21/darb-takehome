@@ -124,15 +124,42 @@ export async function rematchDocument(
  * in NEEDS_REVIEW belong to a human and must not be reshuffled under them, and MATCHED
  * documents are settled.
  */
+/**
+ * Upper bound on one sweep.
+ *
+ * The sweep had no limit, which made the cost of ingesting transactions a function of
+ * how much unmatched history had accumulated — a fleet with ten thousand stale documents
+ * paid for all of them on every batch. A cap makes the work predictable; reporting the
+ * truncation keeps it honest, because a silently capped sweep reads exactly like a sweep
+ * that found nothing.
+ */
+export const REMATCH_SWEEP_LIMIT = 200;
+
+export interface SweepResult {
+  outcomes: RematchOutcome[];
+  /** True when more documents were waiting than the limit allowed in this pass. */
+  truncated: boolean;
+}
+
+/**
+ * Re-run matching for documents that had no home when they arrived.
+ *
+ * Takes every affected client in one call rather than being invoked once per client.
+ * The previous shape fanned out with `Promise.all`, and because unscoped documents are
+ * deliberately included in every pass, an N-client batch ran N concurrent sweeps over
+ * the same unscoped rows — wasted work, and a `scanned` count that counted them N times.
+ */
 export async function rematchUnmatchedDocuments(
-  options: { clientId?: number } = {},
+  options: { clientIds?: number[] } = {},
   prisma: PrismaClient = prismaDefault,
-): Promise<RematchOutcome[]> {
+): Promise<SweepResult> {
+  const clientIds = options.clientIds;
+
   const pending = await prisma.document.findMany({
     where: {
       status: 'UNMATCHED',
       OR: [
-        { clientId: options.clientId ?? { not: null } },
+        clientIds && clientIds.length > 0 ? { clientId: { in: clientIds } } : { clientId: { not: null } },
         // Unscoped documents are included deliberately: a sender registered since
         // ingestion makes one matchable, and `rematchDocument` re-resolves the identity
         // and backfills the row. Excluding them here is what previously stranded them.
@@ -141,10 +168,15 @@ export async function rematchUnmatchedDocuments(
     },
     select: { id: true },
     orderBy: { id: 'asc' },
+    // One more than the limit, so truncation is detectable without a second count query.
+    take: REMATCH_SWEEP_LIMIT + 1,
   });
 
+  const truncated = pending.length > REMATCH_SWEEP_LIMIT;
+  const batch = truncated ? pending.slice(0, REMATCH_SWEEP_LIMIT) : pending;
+
   const outcomes: RematchOutcome[] = [];
-  for (const { id } of pending) {
+  for (const { id } of batch) {
     try {
       const outcome = await rematchDocument(id, prisma);
       if (outcome) outcomes.push(outcome);
@@ -155,7 +187,17 @@ export async function rematchUnmatchedDocuments(
   }
 
   const changed = outcomes.filter((outcome) => outcome.changed);
-  log.info('Re-match sweep complete', { scanned: outcomes.length, changed: changed.length });
+  log.info('Re-match sweep complete', {
+    scanned: outcomes.length,
+    changed: changed.length,
+    truncated,
+  });
 
-  return outcomes;
+  if (truncated) {
+    log.warn('Re-match sweep hit its limit; more documents are still waiting', {
+      limit: REMATCH_SWEEP_LIMIT,
+    });
+  }
+
+  return { outcomes, truncated };
 }

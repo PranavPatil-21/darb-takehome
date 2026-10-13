@@ -1,6 +1,6 @@
 ### Darb Portal — sample webhook requests
 ### Usable with the VS Code REST Client / JetBrains HTTP Client.
-### The email payloads here carry short inline base64; the full generated payloads with
+### The email payload here carries no attachment bytes; the full generated payloads with
 ### real fixture bytes live in fixtures/payloads/ and are fired by scripts/send-sample-webhooks.sh.
 
 @baseUrl = http://localhost:3000
@@ -65,7 +65,10 @@ Content-Type: application/json
   }]
 }
 
-### 4. WhatsApp — scoping. A Nujood driver sends Rawabi's receipt; it must not match.
+### 4. WhatsApp — scoping. A Nujood driver sends a receipt that matches a *Rawabi* charge
+### exactly; sender scoping must still refuse it. Expect UNMATCHED / NO_PLAUSIBLE_CANDIDATE.
+### (This carried media_4471 — the same bytes as request 1 — so it returned DUPLICATE and
+### demonstrated nothing about the rule it names.)
 POST {{baseUrl}}/api/webhooks/whatsapp
 Content-Type: application/json
 
@@ -78,7 +81,7 @@ Content-Type: application/json
           "from": "966561112233",
           "timestamp": "1749899520",
           "type": "image",
-          "image": { "id": "media_4471", "mime_type": "image/jpeg", "sha256": "a3f1c9" }
+          "image": { "id": "media_4477", "mime_type": "image/jpeg", "sha256": "b7d2e4" }
         }]
       }
     }]
@@ -116,11 +119,42 @@ Content-Type: application/json
   "attachments": []
 }
 
-### 7. Transactions — the re-match trigger.
-### Fire request 4's orphan receipt first (it lands UNMATCHED), then this. The response
-### reports which documents the new transaction rescued.
+### 7. WhatsApp — the orphan. A good receipt for a charge that has not posted yet.
+### Lands UNMATCHED (not FAILED), which is what leaves it eligible for the re-match sweep
+### in request 8. Run this one before that one.
+POST {{baseUrl}}/api/webhooks/whatsapp
+Content-Type: application/json
+
+{
+  "entry": [
+    {
+      "changes": [
+        {
+          "value": {
+            "messages": [
+              {
+                "id": "wamid.HBgMOTY2NTUxMjM0NTcwAA==",
+                "from": "966551234567",
+                "timestamp": "1750338720",
+                "type": "image",
+                "image": { "id": "media_4474", "mime_type": "image/jpeg", "sha256": "d4e5f6" }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
+
+### 8. Transactions — the re-match trigger. Run request 7 first.
+### The response reports which documents this new charge rescued:
+###   {"created":[...],"rematch":{"scanned":N,"changed":1,"documents":[{"from":"UNMATCHED","to":"MATCHED"}]}}
+### The Idempotency-Key is REQUIRED — this endpoint creates financial records, and the
+### sweep makes a client-side timeout likely enough that a blind retry would double them.
 POST {{baseUrl}}/api/transactions
 Content-Type: application/json
+Idempotency-Key: requests-http-late-arrival-001
 
 {
   "transactions": [
@@ -136,9 +170,12 @@ Content-Type: application/json
   ]
 }
 
-### 8. Transactions — malformed. Returns 400 with one issue per bad field.
+### 9. Transactions — malformed. Returns 400 with one issue per bad field.
+### The header is supplied so the response shows field-level validation rather than the
+### missing-header refusal.
 POST {{baseUrl}}/api/transactions
 Content-Type: application/json
+Idempotency-Key: requests-http-malformed-001
 
 {
   "transactions": [
@@ -146,7 +183,7 @@ Content-Type: application/json
   ]
 }
 
-### 9. Health checks
+### 10. Health checks
 GET {{baseUrl}}/api/webhooks/email
 
 ###

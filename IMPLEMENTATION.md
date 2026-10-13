@@ -30,6 +30,12 @@ Three properties drove every structural decision, in this order:
    extraction. Everything after step 3 is wrapped so a failure moves the document to a
    terminal state and reports it, rather than propagating. A 500 would make the provider
    redeliver a message we already accepted.
+   The one exception proves the rule: if WhatsApp media cannot be fetched there are no
+   bytes, so there is no content hash and no `Document` to park in `FAILED` — nothing was
+   stored, and a `200` would tell Meta the receipt was delivered and lose it permanently.
+   That case alone answers `503`, which asks for the redelivery the rule above exists to
+   avoid everywhere else. Messages that did succeed are still reported, and dedupe absorbs
+   them on the retry.
 2. **The matcher is pure.** No database, no clock, no mutation. Every edge case in the
    brief is therefore a plain unit test with no fixtures beyond two object literals.
 3. **The rules live in the database where they can.** Idempotency and
@@ -95,8 +101,70 @@ chase, only genuine business tolerance:
 The direction matters because tips only ever push the card *above* the printed receipt.
 A flat symmetric tolerance would score a 10%-under charge the same as a 10% tip, when
 one is routine and the other is an anomaly worth a human's attention. The brief's worked
-example — receipt 57.50, charge 63.25 — scores `0.74` on amount and lands the document at
-`0.84` overall: just under the auto threshold, which is the intended outcome.
+example — receipt 57.50, charge 63.25 — is a 10% gap and scores `0.74` on amount; against
+the seeded charge the document lands at `0.8435` overall and routes to review. It gets
+there on the amount-gap gate described below rather than on that number, which is the
+point of that gate.
+
+### Date proximity, and why there are two windows
+
+Dates are scored in whole UTC days of drift against a fixed curve, and vetoed past the
+window:
+
+| Days apart | 0 | 1 | 2 | 3 | 4+ |
+|---|---|---|---|---|---|
+| `DATE_PROXIMITY_CURVE` | `1.00` | `0.85` | `0.70` | `0.55` | `0.30` |
+
+A step table rather than a formula because the shape is not smooth and should not pretend
+to be. Same day is the claim the receipt actually makes. The next three days fall off
+steadily — that span covers a driver photographing a receipt the following morning and the
+ordinary gap between authorisation and settlement. From day four the curve goes flat at
+`0.30`: past that the date has stopped distinguishing one candidate from another, and a
+curve that kept descending would imply a precision the evidence does not carry. The date is
+the lowest-weighted signal (`0.15`) precisely because this is all it can honestly do.
+
+**The window is not one number, because the two document types mean different things by
+"date".** `maxDateDriftDaysFor()` picks it:
+
+| Constant | Value | Applies to |
+|---|---|---|
+| `MAX_DATE_DRIFT_DAYS` | `7` | `RECEIPT`, and an `UNKNOWN`-type document that arrived by WhatsApp |
+| `INVOICE_MAX_DATE_DRIFT_DAYS` | `45` | `TAX_INVOICE`, and an `UNKNOWN`-type document that arrived by email |
+
+A photographed till receipt is printed *at* the till, so its date and the card
+authorisation are the same event. A week of slack covers a driver clearing their camera
+roll on Sunday plus the odd settlement delay; past that the date genuinely disagrees and
+the candidate should go.
+
+A supplier tax invoice is dated when it was *raised*, which is a different event from when
+the card settled — and it reaches the fleet manager's inbox later still, after the
+supplier's billing run and a forward. Thirty-day terms are ordinary, so 45 days is 30-day
+terms plus the slack either side. Holding invoices to the receipt window vetoed invoices
+that agreed on amount, card *and* merchant, which is as close to certain as this engine
+gets: one signal in its tail was discarding three signals in agreement.
+
+The fallback is keyed on what the document *is*, with the channel deciding only when the
+type could not be read — an invoice forwarded as a WhatsApp photo is still an invoice, and
+an unreadable email is more likely a forwarded invoice than a till slip.
+
+Widening the window does not make a stale date look fresh, because the curve is already
+flat at its tail: everything from day four onward scores `0.30` either way. The date simply
+stops discriminating instead of vetoing. Two consequences worth naming:
+
+- The curve has exactly 8 entries, spanning the 7-day receipt window. Beyond it the lookup
+  is clamped (`Math.min(drift, length - 1)`, with a `?? 0` behind it), so the 45-day window
+  needs no second curve. The config comment flags the window length and the curve length as
+  two numbers that must agree; the clamp is what keeps a future widening safe rather than
+  silently out of range.
+- `candidateWindow` — the query bound in `selectCandidateTransactions` — calls the **same**
+  `maxDateDriftDaysFor()`, plus a day of slack on each side because the query compares
+  instants while `scoreDate` counts whole calendar days. The query must always be the wider
+  of the two: a query narrower than the matcher drops candidates the matcher would have
+  scored, and a candidate that never arrives cannot be overruled by a reviewer. The veto
+  inside the matcher stays the authority on the rule. When the document carries no
+  parseable date there is nothing to anchor on, so the query falls back to 30 days either
+  side of delivery — and the date signal is absent in that case anyway, so widening it
+  further would buy nothing.
 
 ### Merchant similarity
 
@@ -131,6 +199,37 @@ end-to-end by picking the right station out of a set containing both.
 | `AMBIGUITY_MARGIN` | `0.05` | See below. |
 | `MIN_EXTRACTION_CONFIDENCE_FOR_AUTO` | `0.60` | Agreement computed from a bad read is not evidence. |
 | `WEAK_EVIDENCE_CONFIDENCE_CAP` | `0.60` | Merchant + date alone cannot attach money. |
+| `MIN_CORROBORATING_SIGNALS` | `2` | See below. |
+| `MAX_DATE_DRIFT_DAYS` | `7` | The receipt window. See above. |
+| `INVOICE_MAX_DATE_DRIFT_DAYS` | `45` | The invoice window. See above. |
+| `DATE_PROXIMITY_CURVE` | `[1, .85, .7, .55, .3, .3, .3, .3]` | See above. |
+
+### Renormalisation needs a floor, or one signal becomes a certainty
+
+`MIN_CORROBORATING_SIGNALS = 2` is the counterweight to the renormalisation rule above,
+and the two have to be read together.
+
+Excluding unavailable signals and reweighting the rest is right: a thermal receipt that
+does not show a card number should not be punished for it. But taken alone that rule has a
+sharp edge at its limit. A document where OCR read *only* a total renormalises that single
+signal to the full weight and scores a flawless `1.00` — and `1.00` clears every threshold
+in the table above. The engine would then attach a VAT document to the first charge in the
+window carrying that amount, with no merchant, no date and no card corroborating it, mark
+it `AUTO_CONFIRMED`, and never show it to anyone.
+
+So an auto-match requires at least two signals to have been *scored*, not merely to have
+scored well. The candidate is still surfaced and still ranked; it simply cannot settle
+itself.
+
+Two rather than three: requiring three would exclude the common and entirely legitimate
+case of a receipt showing a total and a date and nothing else. Two is the smallest number
+at which a coincidence has to be a coincidence twice over.
+
+This interacts with the merchant rule below. Treating an uninformative acquirer string
+("POS 04 RUH", which normalises to no tokens at all) as an *absent* signal rather than a
+contradicting one is correct — otherwise reading a merchant name off the receipt lowers
+confidence, which is absurd — but it moves such documents into the fewer-signals state
+this floor governs. The floor has to exist first for that change to be safe.
 
 ### The ambiguity margin is the heart of it
 
@@ -160,6 +259,38 @@ A veto cannot be outvoted by other signals. A SAR receipt is not an AED charge n
 how well the merchant name matches, and no weighted average should be able to conclude
 otherwise.
 
+### An unexplained amount gap gates the auto-match
+
+If the top candidate's **amount signal scores below the VAT-rounding plateau** — that is,
+anything the ±5-halala band does not already cover — the document goes to review as
+`UNEXPLAINED_AMOUNT_GAP`. Every tip, every service charge and every undercharge is in
+scope; there is no percentage band here, which is exactly why it reads as a gate rather
+than as another tolerance.
+
+**It is a gate on auto-matching, not a cap on the confidence.** The distinction is the
+whole point. A cap would rewrite the number the reviewer sees, so the screen would show a
+confidence that no longer corresponds to how well the evidence agrees, and the signal
+breakdown underneath it would add up to something else. Instead the score stays honest —
+`0.8435` is still reported as `0.8435` — and a separate rule says this one may not settle
+itself. That is the same separation `MIN_EXTRACTION_CONFIDENCE_FOR_AUTO` keeps, and the
+reason both of them are readable.
+
+The evidence for needing it at all is the brief's own worked example. Receipt 57.50 against
+a 63.25 charge scores `0.74` on amount, and whether that document auto-attached used to
+depend on **how the acquirer abbreviated the merchant name**:
+
+| Acquirer string | Merchant signal | Overall | Outcome before the gate |
+|---|---|---|---|
+| `NAJD VILLAGE REST RUH` | `0.7373` | `0.8435` | review — by `0.0065` under `AUTO_MATCH_THRESHOLD` |
+| `NAJD VILLAGE RESTAURANT RUH` | `1.0` | `0.896` | **auto-attached** |
+
+Both strings are equally realistic output from the same terminal. Three of the four
+plausible renderings auto-attached, and the test that pinned the brief's expected outcome
+was passing on a margin of `0.0065` — it was asserting a coincidence of string
+abbreviation, not a property of the engine. For a VAT filing, a receipt that does not
+substantiate the amount actually charged is precisely what a person is there to look at,
+and that should not turn on spelling.
+
 ### OCR confidence gates but does not dilute
 
 `extractionConfidence` is kept out of the match score entirely and used only as an
@@ -168,6 +299,30 @@ they would see "amount 100%, merchant 90%" and a total that matches neither, wit
 indication why. The signals describe document-versus-transaction evidence; OCR confidence
 is a separate axis and is displayed separately. The `email-02-low-confidence` fixture has
 every signal at 100% and still routes to review.
+
+### The order the reasons are checked in
+
+Several of the rules above can fire on the same document, and only one of them becomes the
+`reason` the reviewer reads. The order is therefore part of the design, and it is ordered
+by **what the reviewer has to decide** rather than by how the code happens to read:
+
+1. `TRANSACTION_ALREADY_DOCUMENTED` — the charge already holds a receipt. *Which document
+   does it keep?*
+2. `AMBIGUOUS_TOP_CANDIDATES` — two charges fit equally well. *Which charge is it?*
+3. `UNEXPLAINED_AMOUNT_GAP` — the totals do not agree. *Is the difference a tip?*
+4. `WEAK_EVIDENCE` / `MID_CONFIDENCE` — everything is merely weak. *Is this the right
+   charge at all?*
+5. `INSUFFICIENT_CORROBORATION` — one signal, scoring perfectly. *What else agrees?*
+6. `LOW_EXTRACTION_CONFIDENCE` — the signals agree, the read does not. *Is the scan
+   legible?*
+7. `AUTO_MATCHED` / `CONFIDENT_SINGLE_CANDIDATE`.
+
+Each question is more specific than the one below it, and answering it dispatches the
+document to a different action — and often to a different person. The generic confidence
+check (4) used to run first, which meant it swallowed the two above it: a duplicate receipt
+and an unexplained gap both surfaced as `MID_CONFIDENCE`, which is true but burying the one
+fact that changes what the reviewer does. A headline that is accurate and useless is worse
+than no headline, because it looks like it has been answered.
 
 ---
 
@@ -216,8 +371,8 @@ ids`, and `collapses identical file content regardless of which sender submitted
 
 The brief's `MatchResult` carries `outcome` and `candidates`. This one adds a third field,
 `reason` — a closed union naming *why* the engine landed where it did
-(`AMBIGUOUS_TOP_CANDIDATES`, `WEAK_EVIDENCE`, `TRANSACTION_ALREADY_DOCUMENTED`, and six
-others).
+(`AMBIGUOUS_TOP_CANDIDATES`, `WEAK_EVIDENCE`, `TRANSACTION_ALREADY_DOCUMENTED`, and eight
+others — eleven in all, listed in `MATCH_REASONS`).
 
 It exists because `NEEDS_REVIEW` on its own tells a reviewer nothing. Two documents can
 reach the review queue for opposite reasons — one because two transactions tie perfectly,
@@ -230,30 +385,45 @@ The addition is additive: `outcome` and `candidates` keep the exact shape and se
 brief specifies, and `MatchCandidate` is unchanged (`signals` is `Record<string, number>` as
 written).
 
-### Not created: the `types/` directory
+### The `types/` directory is an index, not a home
 
 The brief's project-structure diagram ends with a `types/` folder and does not say what goes
-in it. Nothing in this implementation needed it: the extractor contract the brief specifies
-lives at `lib/extraction/types.ts` where the brief itself puts it, the domain unions and
-their Zod schemas live in `lib/domain/enums.ts` next to the code that validates against
-them, and every DTO is declared in the module that owns it.
+in it. Relocating declarations into it would move types away from the code they describe:
+the extractor contract belongs at `lib/extraction/types.ts`, where the brief itself puts it,
+and the domain unions belong next to the Zod schemas that validate against them.
 
-Creating the directory to satisfy the diagram would mean either committing a placeholder
-file or relocating types away from the code they describe — adding indirection to look
-compliant. Git cannot track an empty directory in any case, so a reviewer cloning the repo
-would not see one. Flagging the omission seemed better than either.
+So `types/index.ts` is a type-only re-export of the surfaces a consumer actually types
+against — the extractor and media seams, the matcher's inputs and outputs, the domain
+lifecycle unions. Each declaration stays in the module that owns it; this is the published
+index over them. It emits no runtime code, so importing it cannot pull the database or the
+extractor into a consumer's bundle.
 
 ### Grown: seed and fixture counts
 
 The brief asks for "~15 transactions across 2 clients" and "at least 6 fixture documents".
-This seeds 22 transactions and ships 18 fixtures.
+This seeds **202 transactions** — 22 scripted plus 180 generated — and ships 18 fixtures.
 
-The extra rows are not padding — each one is reached by exactly one demo scenario. The brief's
-six edge cases needed roughly its suggested volume; demonstrating the remaining scoring rules
-end-to-end (the VAT tolerance, the date curve, the three vetoes, the already-documented rule,
-weak evidence, an empty candidate set) needed a transaction apiece. Transactions 17-22 and the
-last eight fixtures exist for that, on a driver deliberately isolated from everything else so
-they cannot perturb the original scenarios. See § 4a.
+The two groups exist for different reasons and it is worth being precise about which:
+
+- **The 22 scripted charges are each reached by exactly one demo scenario.** The brief's six
+  edge cases needed roughly its suggested volume; demonstrating the remaining scoring rules
+  end-to-end (the VAT tolerance, the date curve, the three vetoes, the already-documented
+  rule, weak evidence, an empty candidate set) needed a charge apiece. Transactions 17-22 and
+  the last eight fixtures exist for that. See § 4a.
+- **The 180 background charges are volume, and nothing is scripted against them.** They exist
+  so the dashboard, ageing buckets and register filters have something realistic to show. An
+  earlier revision of this document claimed every seeded row served a scenario; that was true
+  of the 22 and never of the 180.
+
+The generator draws only on cards **8899**, **1155** and **7731** — deliberately *not* the
+cards the scripted scenarios run on. That separation is load-bearing rather than tidy: when
+background volume was generated onto card 4412, it gave the orphan receipt (whose entire
+purpose is to have no plausible charge) four candidates at 0.67, which turned a demonstrated
+`UNMATCHED` into a review item — and because the re-match sweep only revisits `UNMATCHED`
+documents, it also made the late-arrival rescue in § 6 silently stop working. The separation
+is now a `SCENARIO_CRITICAL_CARDS` list that the seed **throws** on rather than a comment
+asking the next person to remember. The demo table
+in the README is regenerated from a real run for exactly this reason.
 
 ### Changed: scoping is a filter, not a scored signal
 
@@ -305,7 +475,32 @@ the guarantee under test is the real one.
 
 `rejectMatch` is the inverse: rejecting a *confirmed* match releases the slot. That is the
 undo path for a wrong auto-match and the mechanism behind the duplicate-receipt flow —
-reject the incumbent, then confirm the correct document.
+reject the incumbent, then confirm the correct document. It uses the same compare-and-set
+shape as `confirmMatch` — an `updateMany` predicated on the status it read — and raises
+`ConcurrentDecisionError` when it updates zero rows, so two reviewers deciding the same
+match at once produce one decision and one refusal rather than two writes.
+
+### `Document.status` has one writer
+
+`Document.status` is a cached roll-up of the document's match rows, and it was being
+written from six places — each one computing the new value from what it happened to know.
+That drifts, and it did: **rejecting a `CANDIDATE` sibling flipped the document to
+`UNMATCHED` while it still held an `AUTO_CONFIRMED` match and the charge still pointed at
+it.** The document was reported as having no evidence behind it, from the same row the
+charge was citing as its evidence. In a VAT-compliance product that is the worst shape a
+bug can take: the two screens disagree and neither is obviously wrong.
+
+The fix is the same discipline as the slot claim, applied to a derived value rather than a
+contended one. `lib/domain/document-status.ts` derives the status purely from the set of
+match statuses; `recomputeDocumentStatus()` in `lib/services/document-status.ts` is the
+**only** writer once matching has run. It re-reads the match rows rather than trusting what
+its caller believes, and runs inside the transaction that changed them. A caller confident
+it already knows the answer is exactly the caller that can be wrong.
+
+Ingestion keeps its own direct writes for the pre-match lifecycle (`RECEIVED` →
+`EXTRACTED` → `FAILED`) because those are properties of extraction, not of matches, and the
+function deliberately refuses to invent them. This mirrors `charge-status.ts`, which already
+did the same job on the transaction side — the document side was simply missing its half.
 
 ### Idempotency of the review actions
 
@@ -320,15 +515,15 @@ protects nobody against a second browser tab.
 
 The unit tests prove the engine is right. They do not let anyone *see* it be right, and a
 reviewer reading this in twenty minutes should not have to run Jest to believe a claim.
-`npm run webhooks:demo` therefore fires nineteen payloads through the real webhooks against
-a real database, and between them they reach **every one of the nine reason codes
-`matchDocument` can return**:
+`npm run webhooks:demo` therefore fires all eighteen payloads through the real webhooks
+against a real database — one of them twice, to show the duplicate path — and between them
+they reach **nine of the eleven reason codes `matchDocument` can return**:
 
 | Reason code | Demonstrated by |
 |---|---|
 | `CONFIDENT_SINGLE_CANDIDATE` | `whatsapp-01-exact-match` — every signal agrees |
 | `AMBIGUOUS_TOP_CANDIDATES` | `whatsapp-02-ambiguous` — two transactions tie exactly |
-| `MID_CONFIDENCE` | `whatsapp-03-tip-mismatch` — plausible, short of the bar |
+| `UNEXPLAINED_AMOUNT_GAP` | `whatsapp-03-tip-mismatch` — the brief's 57.50 / 63.25 case |
 | `NO_PLAUSIBLE_CANDIDATE` | `whatsapp-04-orphan`, and each of the three veto scenarios |
 | `UNUSABLE_EXTRACTION` | `whatsapp-05-garbage` — OCR returned noise |
 | `LOW_EXTRACTION_CONFIDENCE` | `email-02-low-confidence` — signals agree, the read does not |
@@ -336,14 +531,25 @@ a real database, and between them they reach **every one of the nine reason code
 | `WEAK_EVIDENCE` | `whatsapp-14-faded-receipt` — merchant and date only |
 | `NO_CANDIDATE_TRANSACTIONS` | `whatsapp-15-new-driver` — nothing in scope yet |
 
+The two that are not on this list — `MID_CONFIDENCE` and `INSUFFICIENT_CORROBORATION` —
+are both still reachable and are pinned by unit tests rather than by a fixture. Both now
+need a narrow shape to reach: `MID_CONFIDENCE` requires an amount that either agrees within
+VAT rounding or could not be read at all, *and* an overall score under `0.85`;
+`INSUFFICIENT_CORROBORATION` requires a single signal scoring well enough to clear `0.85`
+on its own. Constructing those as object literals is a two-line test and a contrived
+fixture, so they are tested where they are cheap rather than demonstrated where they would
+be artificial.
+
 The last eight scenarios were added on an **isolated driver** (card `5520`, plus one driver
 with no transactions at all). That isolation is deliberate and load-bearing: the demo script
 fires sequentially against live state, so a new seed transaction landing near an existing
 fixture's merchant, card and date would quietly become a second candidate for it and turn a
 documented `AUTO_MATCHED` into `NEEDS_REVIEW`. Scoping every new scenario to a card nothing
 else touches makes that class of interference impossible rather than merely unlikely. The
-demo output was captured before the additions and diffed after; all twelve pre-existing
-lines are byte-identical.
+demo output is captured before any change and diffed after, so an interference of that kind
+shows up as a line that moved rather than as a demo that quietly stopped demonstrating its
+scenario. The only line the amount-gap gate moved is `whatsapp-03-tip-mismatch`, which it
+was added to move.
 
 `__tests__/fixtures.test.ts` guards the three ways this catalogue fails *silently* rather
 than loudly — two fixtures sharing bytes (the second is rejected as a duplicate and proves
@@ -395,6 +601,58 @@ empty list when nothing separates them at all, and the UI says so and suggests r
 both. An interface that presents a coin flip as a choice is how a wrong attachment gets
 made and then looks reviewed.
 
+### One queue, grouped by the job — not two partial lists
+
+The review queue and a separate "exceptions" register were two hand-maintained answers to
+the same question, and they disagreed in both directions. A possible-duplicate document was
+`NEEDS_REVIEW`, so it appeared in the queue *and* in the exception register. Five documents
+that had simply found no charge appeared in **neither** — not `FAILED`, not from an unknown
+sender, so no exception; not `NEEDS_REVIEW`, so not in the queue. They were invisible, and
+the two screens between them created the impression of coverage.
+
+Two definitions of "needs attention" will drift. One derived definition cannot, so the
+queue is now built from a single taxonomy in `lib/platform/work-queue.ts` that maps
+`(status, failureReason, clientId)` to one of seven kinds, grouped by **what the person has
+to do** rather than by database status. A reviewer does not care that one document is
+`NEEDS_REVIEW` and another `UNMATCHED`; they care that one needs a charge picked and the
+other needs a sender registered. Those are different jobs, often different people.
+
+Three of the seven are marked `decidable: false`. They have no candidate to confirm, so the
+interface does not offer buttons that cannot work — it states the next step instead
+("Ask the driver for a clearer photo", "Register the sender"). Hiding them was what the
+exception page did, and it is how documents fell into the gap.
+
+The property worth testing is not that the groups look tidy but that **nothing can fall
+through**: `work-queue.test.ts` asserts that every value in `MATCH_REASONS` classifies, so
+a reason code added to the matcher fails the suite rather than quietly vanishing from the
+interface. `MATCH_REASONS` is exported as a value for exactly that reason, with a
+compile-time check that it and the `MatchReason` union cannot drift apart.
+
+The nav badge and the overview figure now come from the same taxonomy, so the number on the
+tab and the number of rows behind it cannot disagree. The overview counts the two kinds
+separately — "1 needs a decision · 2 need something else" — because one number would
+flatter the first figure and misdescribe the second.
+
+### The candidate comparison is not written for one example
+
+That logic was right and its reach was not. It compared `charges[0]` and `charges[1]` and
+rendered only when the reason code was `AMBIGUOUS_TOP_CANDIDATES`, which made it read as
+copy written for one fixture — a third tied outlet of the same chain was dropped from the
+one screen meant to show everything competing, and a two-candidate document under any other
+reason got no comparison at all.
+
+`chargeDifferencesAcross` now takes any number of charges, reports a field as differing if
+*any* pair differs, and lists **every** distinct value — a reviewer choosing between three
+outlets needs all three branch numbers. The heading is derived from the situation rather
+than fixed: how many charges, and whether their scores genuinely tie. "Equally good matches"
+is a claim about the scores, and saying it of a clear leader would overstate the difficulty
+and invite a coin toss over a decision the engine had nearly made.
+
+One judgement worth recording: "the branch" is used only when *every* pair reads as the same
+chain. One unrelated merchant among three outlets makes the whole set a merchant difference,
+because telling a reviewer to check the branch when the names genuinely differ sends them
+looking for the wrong thing.
+
 ### Things that were on screen and should not have been
 
 `a100 · c100 · m88 · d100` under every confidence figure was a debug print of a
@@ -442,27 +700,64 @@ rebuilt UI.
 
 ## 5. Testing
 
-**287 tests across 16 suites.** Distribution follows the brief's instruction to put most
-effort into the matcher — 98 of the 285 tests exercise the matching engine alone.
+**495 tests across 32 suites.** Distribution follows the brief's instruction to put most
+effort into the matcher — 146 of them exercise the matching engine alone
+(`matcher-edge-cases`, `transaction-matcher`, `matcher-corroboration`, `merchant`).
+
+Coverage is gated rather than merely measured — `npm run test:coverage` fails the build on
+any of these, statements / branches / functions / lines:
+
+| Scope | Gate | Measured |
+|---|---|---|
+| `lib/matching/**` | 95 / 95 / 95 / 95 | 98.85 / 96.42 / 100 / 100 |
+| `lib/services/transaction-matcher.ts` | 97 / 92 / 95 / 99 | 97.57 / 92.30 / 100 / 99.20 |
+| `lib/services/document-ingestion.ts` | 83 / 83 / 80 / 83 | 86.11 / 86.53 / 80 / 85.84 |
+| Everything else under `lib` | 87 / 73 / 83 / 89 | 88.29 / 74.92 / 84.64 / 89.96 |
+
+Each gate sits just under what the suite achieves, so the coverage is locked in rather than
+left as headroom that erodes quietly. Two things the table would otherwise mislead on. The
+global row is **not** the summary table's "All files" line (89.89 / 78.87 / 85.87 / 91.19):
+Jest removes a path-specific group from the global one, so the global number is measured
+over `lib` *minus* the three scopes above it — which are the well-covered ones — and is
+lower by construction. And the global floor is deliberately modest rather than aspirational:
+much of `lib/platform` and `lib/ui` is read-model and presentation code exercised through
+the pages, and chasing a higher number there invites tests written to move the number.
+Where the correctness lives, the gate is 95+.
 
 | Suite | Tests | Covers |
 |---|---|---|
-| `matcher-edge-cases` | 65 | Every scoring threshold probed on both sides of its edge |
-| `transaction-matcher` | 33 | All six of the brief's edge cases, vetoes, purity, determinism |
-| `comparison` | 32 | The document-vs-charge diff, and what separates two tied charges |
+| `matcher-edge-cases` | 72 | Every scoring threshold probed on both sides of its edge |
+| `transaction-matcher` | 34 | All six of the brief's edge cases, vetoes, purity, determinism |
+| `comparison` | 37 | The document-vs-charge diff, and what separates two tied charges |
+| `work-queue` | 35 | The taxonomy is exhaustive; nothing waiting can fall out of the queue |
+| `matcher-corroboration` | 24 | Minimum evidence, uninformative merchant names, card formats |
+| `architecture` | 26 | Layering, matcher purity, request-state confinement, the single writer of `confirmedDocumentId` |
 | `webhooks` | 21 | 400 on malformed, never 500, HMAC, production fails closed |
+| `messages` | 34 | The content layer: interpolation, pluralisation, missing keys, reason coverage |
 | `document-ingestion` | 19 | Idempotency incl. concurrent, failure isolation, scoping |
 | `merchant` | 18 | Normalisation and similarity on real acquirer strings |
 | `transaction-status` | 13 | Derived documentation status, precedence, ageing |
-| `transactions-route` | 12 | Transaction ingestion and the re-match trigger |
+| `verification` | 16 | Maker-checker selection policy and segregation of duties |
+| `review-actions` | 12 | Confirm/reject lifecycle, double-submit, slot contention |
 | `rematch` | 12 | Late arrivals, rejections are permanent, late sender registration |
+| `transactions-route` | 13 | Transaction ingestion and the re-match trigger |
 | `coverage` | 12 | Receipt coverage and the 15/115 VAT extraction |
-| `verification` | 12 | Maker-checker selection policy and segregation of duties |
-| `review-actions` | 11 | Confirm/reject lifecycle, double-submit, slot contention |
-| `identity` | 9 | The host seam, capabilities and tenant scoping |
+| `identity` | 11 | The host seam, capabilities and tenant scoping |
+| `audit-integrity` | 9 | The trail outlives the document; sibling rejections; un-reject |
+| `document-detail` | 8 | A document's journey: extraction, charges considered, scoping |
+| `comparison-nway` | 8 | Three-way ties, and every distinct value reported |
+| `rematch-bounds` | 7 | Sweep limits, truncation reporting, batch idempotency |
 | `audit` | 7 | The append-only trail and what it survives |
+| `charge-detail` | 7 | The evidence file: sign-off, signals, history that explains itself |
+| `charge-status` | 7 | The materialised status tracks the derivation on every path |
+| `age-range` | 6 | The SQL age range selects exactly what the bucket function would |
+| `action-refusals` | 6 | A refusal is reported, not thrown |
+| `pipeline-isolation` | 5 | One failing attachment or message costs only itself |
 | `enums` | 5 | Decoding untrusted values at the persistence boundary |
 | `fixtures` | 4 | The demo catalogue's own invariants |
+| `dashboard-ageing` | 2 | A charge ages the same however it is filtered; a waiting document ages against now |
+| `charge-register` | 2 | Status chips count every charge; status and age filters compose |
+| `assurance-actions` | 3 | Overturning and upholding an attachment, driven to completion |
 
 Three deliberate choices:
 
@@ -525,9 +820,13 @@ rescan every unmatched document in the system on every batch — and reports wha
 rescued:
 
 ```json
-{"created":[17],"rematch":{"scanned":2,"changed":1,
- "documents":[{"documentId":4,"from":"UNMATCHED","to":"MATCHED"}]}}
+{"created":[1199],"rematch":{"scanned":3,"changed":1,
+ "documents":[{"documentId":2705,"from":"UNMATCHED","to":"MATCHED"}]}}
 ```
+
+That is real output from `npm run webhooks:demo`, not an illustration: the script posts the
+late transaction with an `idempotency-key` header, so the orphaned receipt from earlier in
+the same run is rescued where a reviewer can watch it happen.
 
 Re-matching never re-runs OCR. The extraction is already persisted on the `Document` row,
 and OCR is the expensive, non-deterministic, paid part of the pipeline — replaying it on
@@ -555,10 +854,12 @@ build it, because that ordering is itself a judgement worth stating.
 
 ### 7.1 Authentication — there is no "who" in this system yet
 
-Every decision this codebase records is attributed to the string `'reviewer'`, hardcoded in
-`lib/actions/review.ts`. That is honest for an exercise with no login, and indefensible for
-a VAT-compliance product: `decidedBy` exists precisely so an auditor can ask *who attached
-this receipt to this charge*, and right now the answer is always the same fiction.
+Every decision this codebase records is attributed to whatever `resolveActor()` returns,
+and with no host mounted that is one of two development identities
+(`lib/platform/identity.ts`). The seam is real — a host supplies its own resolver and
+nothing else changes — but the identity behind it is still a fiction, and that is
+indefensible for a VAT-compliance product: `decidedBy` exists precisely so an auditor can
+ask *who attached this receipt to this charge*.
 
 I would add session-based auth before any other production work, because everything in 7.2
 depends on there being a caller to reason about.
@@ -566,8 +867,8 @@ depends on there being a caller to reason about.
 - **Shape:** Auth.js (NextAuth) with an email/OIDC provider, a `User` model, and a
   `Session` carrying `userId` and `clientId`. Fleet operators are an organisational
   customer, so SSO against their IdP matters more than a password form.
-- **The one change that matters most:** `REVIEWER` stops being a constant and becomes
-  `session.user.id`. `decidedBy` becomes a real foreign key to `User`, and the audit trail
+- **The one change that matters most:** `resolveActor` stops returning a development
+  identity and returns `session.user.id`. `decidedBy` becomes a real foreign key to `User`, and the audit trail
   becomes worth the column it occupies.
 - **Drivers do not log in.** They send a WhatsApp photo. Their identity is the phone number,
   already modelled as `SenderIdentity` — which is why that model is the right seam: it is
@@ -717,11 +1018,21 @@ here than optimality.
 invoice total, that is strong evidence the set is complete — so if 11 of 12 lines matched
 confidently, the twelfth is near-certain. I would promote that last line only when: the
 amounts reconcile, every other line matched, it has exactly one candidate above the review
-floor, that transaction is not already documented, **and** the line has its own readable
-amount above the VAT-rounding band. Without that last condition, "the totals add up" would
-be the only evidence — and promoting on merchant and date alone is precisely what
-`WEAK_EVIDENCE_CONFIDENCE_CAP` exists to prevent. The sum tolerance should scale with line
-count (`VAT_ROUNDING_TOLERANCE_HALALAS × lines`), since per-line rounding accumulates.
+floor, that transaction is not already documented, **and** the line carries its own readable
+amount that agrees with the charge at least as closely as VAT rounding. Without that last
+condition, "the totals add up" would be the only evidence — and promoting on merchant and
+date alone is precisely what `WEAK_EVIDENCE_CONFIDENCE_CAP` exists to prevent. The sum
+tolerance should scale with line count (`VAT_ROUNDING_TOLERANCE_HALALAS × lines`), since
+per-line rounding accumulates.
+
+These are two different comparisons and the distinction has to survive into the
+implementation. The sum tolerance compares *the invoice total against the sum of its
+lines*; the amount-gap gate compares *one line against one charge*. So a statement line
+carrying a tip is a review item **even when the invoice total reconciles perfectly** —
+reconciliation evidences that the set of lines is complete, not that any one line
+substantiates the amount charged. Letting a clean total promote a line whose own amount
+disagrees would re-open exactly the hole the gate was added to close, one indirection
+further away from where anyone would look for it.
 
 *Document status becomes derived.* A document would be `MATCHED` only when every line is,
 `PARTIALLY_MATCHED` when some are, `NEEDS_REVIEW` whenever any line needs a human. The
@@ -751,6 +1062,59 @@ duplicates as a review reason rather than dropping them — but that changes a s
 requirement, so it is a conversation, not a unilateral decision.
 
 ---
+
+### 7.5 Known gaps, written down rather than left implicit
+
+The sections above are the things worth building next. This one is the honest ledger of
+what is *missing or imperfect right now* — found by reviewing this codebase against itself
+rather than by remembering what I skipped. Each entry says what is wrong, what it costs,
+and why it is still open. Nothing here is a surprise waiting for a reviewer to find.
+
+#### Infrastructure the exercise did not call for
+
+| # | Gap | Cost today | Why it is open |
+|---|---|---|---|
+| 1 | **No `prisma/migrations/`.** The scripts use `prisma db push`. | No migration history, no rollback, no review of a schema change. `db push` against a real database can drop a column silently. | `db push` is the right tool for a disposable SQLite demo. The moment this has a shared environment it is wrong, and generating a baseline migration is the first thing to do. |
+| 2 | **SQLite on a local file.** `prisma/dev.db`. | A serverless filesystem is ephemeral and often read-only, so this cannot deploy to Vercel-style hosting as configured. No Dockerfile, no CI config. | The brief mandated SQLite. Postgres is already named in § 7.4; this adds the deployment consequence, which that section does not state. |
+| 3 | **No request body limit on webhooks.** `lib/webhooks/schemas.ts` caps neither `contentBase64` length nor the `attachments`/`messages` array. | One email with 200 attachments is accepted and processed sequentially — measured at 0.65s and growing linearly. An unauthenticated endpoint should not let a caller choose its own cost. | `/api/transactions` already caps its array at 500; the webhooks should borrow that. One `.max()` per array and a byte cap on the base64. |
+| 4 | **Module-level mutable config singletons.** `extraction/index.ts`, `media-store.ts`, `identity.ts`, `messages.ts`, `module-config.ts`. | Correct for a host that configures once at boot. On serverless, each instance re-initialises, and any per-request `set*` call would leak across concurrent requests in the same instance. | The seams themselves are right. What is missing is a guard that refuses configuration after the first read, which would make the boot-only contract enforced rather than assumed. |
+
+#### Things that work but are not finished
+
+| # | Gap | Cost today | Why it is open |
+|---|---|---|---|
+| 5 | **No pagination anywhere.** Both registers cap at 200 and say so; `charge-register` computes a `nextCursor` nothing consumes. | Past 200 rows the only recourse is narrowing the filter. | The design is written up in `docs/specs/` and explicitly marked as not shipped. It is a day of work, and it needs a "Load more" control to be worth anything. |
+| 6 | **`getAssuranceQueue` is unbounded** (`lib/platform/assurance-queue.ts`) — the only read model with no `take`. | A large backlog renders every row. | Not reachable at demo scale; it is the one place the 200-row discipline was not applied. |
+| 7 | **`getAssuranceQueue` and parts of `getDashboard` scope one side of the join.** They filter `document: scope` and leave the `transaction` side unconstrained. | Safe *only* because the matcher never pairs across clients — a correctness property enforced elsewhere, not here. | Defence in depth is one extra `where` clause each. It is open because the invariant it leans on is real and tested; it should not stay open. |
+| 8 | **The architecture tests check direct imports only, by regex.** `__tests__/architecture.test.ts` | A transitive import (`lib/domain` → a new pure-looking `lib/services` wrapper → `@/lib/prisma`) passes. So does a raw-SQL slot write, a `data` object built in a variable, and a `data: { nested: {}, confirmedDocumentId }` shape — the pattern stops at the first `}`. | They catch the mistakes people actually make, which is most of their value. Making them robust needs real module-graph analysis (`dependency-cruiser` or ts-morph) rather than a regex over source text. `docs/ARCHITECTURE.md` now states this limit instead of implying the rules are airtight. |
+| 9 | **Roughly eight tests would survive the rule they name being deleted.** Identified by mutation testing; the worst — `work-queue.test.ts`'s `if (kind !== null)` guard — is fixed. The rest are in `audit.test.ts`, `review-actions.test.ts:129` and a few threshold assertions that are true by construction. | A green suite overstates its own coverage in those spots. | Each is a small rewrite. They are listed here rather than quietly fixed because knowing *which* tests are weak is more useful than a number. |
+| 10 | **`lib/services/charge-status.ts` and `document-status.ts` sit at 0% branch coverage.** The modules are exercised — mutation testing kills changes to them — but their early-return branches are not. | The null-return path (row deleted underneath the write) is argued, not tested. | Two small tests. Worth doing precisely because these are the single-writer modules the correctness argument rests on. |
+
+#### Product gaps a user would notice
+
+| # | Gap | Cost today |
+|---|---|---|
+| 11 | **No way to act on a document that matched nothing.** `UNMATCHED` documents appear in the queue with a next step ("register the sender", "wait for the charge") but no control to do either. | The queue tells you what to do and makes you leave to do it. |
+| 12 | **Unknown-sender documents are invisible to a scoped tenant** — by design, since `clientId: null` belongs to nobody — but that means the work kind whose next step is *"register the sender"* can only be seen by an unrestricted operator. | A real deployment needs an explicit triage surface for unscoped documents rather than this emergent behaviour. |
+| 13 | **No bulk actions, no keyboard shortcuts in the queue.** | A reviewer clearing 200 documents does it one click at a time. The single-document focus is right for the ambiguous cases and wrong for the obvious ones. |
+| 14 | **No audit export.** The trail is append-only and complete, but only readable in the UI. | A VAT filing needs it as a file. |
+
+#### Where the demo data is doing too much work
+
+| # | Gap | Cost today |
+|---|---|---|
+| 15 | **202 seeded transactions against the brief's "~15".** 22 scripted plus 180 generated. | The registers and ageing buckets need volume to be worth looking at, so the extra rows earn their place on the dashboard. They also mean the eleven graded scenarios are ~11% of the data, and finding scenario 7 by hand is harder than it should be. A `--minimal` seed flag would give a reviewer both. |
+
+---
+
+**One thing worth saying plainly about this list.** Most of it was found by reviewing the
+remediation work in this repository *after* it was written, not while writing it — and a
+meaningful share of the defects that review turned up were introduced by that same
+remediation pass, in code that was green at the time. The tests did not catch them because
+the invariant they violated had no test. That is the argument for the global `afterEach`
+checks in `__tests__/setup.ts`, and it is the reason item 10 above is on this list rather
+than silently closed: the modules that enforce correctness are the ones whose own branches
+most need covering.
 
 ## 8. Assumptions
 

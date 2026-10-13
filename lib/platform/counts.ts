@@ -1,6 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import prismaDefault from '@/lib/prisma';
 import { clientScopeFilter, type Actor } from '@/lib/platform/identity';
+import { getWorkCounts } from '@/lib/platform/work-queue';
 
 /**
  * The badge counts carried by the module navigation.
@@ -15,9 +16,13 @@ import { clientScopeFilter, type Actor } from '@/lib/platform/identity';
  */
 
 export interface NavCounts {
+  /** Everything waiting on a person, decidable or not. The badge the reviewer reads. */
   review: number;
+  /** Of those, the ones a reviewer can actually settle with confirm/reject. */
+  reviewDecidable: number;
+  /** Of those, the ones needing a different kind of fix entirely. */
+  reviewBlocked: number;
   assurance: number;
-  exceptions: number;
 }
 
 export async function getNavCounts(
@@ -26,8 +31,12 @@ export async function getNavCounts(
 ): Promise<NavCounts> {
   const scope = clientScopeFilter(actor);
 
-  const [review, assurance, exceptions] = await Promise.all([
-    prisma.document.count({ where: { ...scope, status: 'NEEDS_REVIEW' } }),
+  // The review badge and the exception badge used to be two counts over two overlapping
+  // queries, which is exactly how they came to disagree. Both now come from the one
+  // taxonomy the queue itself is built from, so the number on the tab and the number of
+  // rows behind it cannot drift apart.
+  const [work, assurance] = await Promise.all([
+    getWorkCounts(actor, prisma),
     prisma.documentMatch.count({
       where: {
         status: { in: ['CONFIRMED', 'AUTO_CONFIRMED'] },
@@ -36,17 +45,12 @@ export async function getNavCounts(
         document: scope,
       },
     }),
-    // FAILED is an extraction that produced nothing usable; UNMATCHED with no client is a
-    // document from a sender nobody has registered. Both are stuck in a way that no
-    // amount of waiting resolves, which is what makes them exceptions rather than
-    // in-flight work.
-    prisma.document.count({
-      where: {
-        OR: [{ status: 'FAILED' }, { status: 'UNMATCHED', clientId: null }],
-        ...scope,
-      },
-    }),
   ]);
 
-  return { review, assurance, exceptions };
+  return {
+    review: work.total,
+    reviewDecidable: work.decidable,
+    reviewBlocked: work.blocked,
+    assurance,
+  };
 }

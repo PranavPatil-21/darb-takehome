@@ -126,7 +126,9 @@ export default async function AssurancePage() {
                     </dd>
 
                     <dt className="text-xs text-muted-foreground">Date</dt>
-                    <dd className="tabular-nums text-muted-foreground">—</dd>
+                    <dd className="tabular-nums text-muted-foreground">
+                      {row.documentDate ? formatDay(row.documentDate) : '—'}
+                    </dd>
                     <dd className="tabular-nums text-muted-foreground">
                       {formatDay(row.chargeAt)} · {formatTime(row.chargeAt)}
                     </dd>

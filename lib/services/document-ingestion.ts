@@ -14,6 +14,7 @@ import {
 } from '@/lib/domain/enums';
 import { selectCandidateTransactions } from '@/lib/services/candidate-selection';
 import { claimConfirmedDocumentSlot } from '@/lib/services/slot-claim';
+import { recomputeDocumentationStatuses } from '@/lib/services/charge-status';
 import {
   matchDocument,
   type MatchableDocument,
@@ -99,6 +100,9 @@ function isUniqueConstraintViolation(error: unknown): boolean {
  * the pipeline and the matching engine, and an inline call keeps the whole flow
  * observable in one test without a broker.
  */
+/** How many vetoed charges to name in a log line before summarising the rest. */
+const VETO_LOG_SAMPLE = 5;
+
 export async function ingestDocument(
   input: IngestionInput,
   prisma: PrismaClient = prismaDefault,
@@ -277,6 +281,19 @@ export async function processDocument(
       reason: match.reason,
       candidates: match.candidates.length,
       topConfidence: match.candidates[0]?.confidence ?? null,
+      // The excluded charges and the rule that excluded each. Without this, "why was this
+      // not attached to the obvious transaction" — the question operations actually asks
+      // — has no answer anywhere in the system.
+      //
+      // Summarised rather than enumerated: a wide date window over a busy fleet vetoes
+      // hundreds of charges on amount alone, and a log line nobody can read is not
+      // observability. The counts answer "why not", the sample answers "show me".
+      vetoedCount: match.vetoed.length,
+      vetoedByReason: match.vetoed.reduce<Record<string, number>>((tally, entry) => {
+        tally[entry.veto] = (tally[entry.veto] ?? 0) + 1;
+        return tally;
+      }, {}),
+      vetoedSample: match.vetoed.slice(0, VETO_LOG_SAMPLE),
     });
 
     return { disposition: 'INGESTED', documentId, status, match };
@@ -343,8 +360,18 @@ export async function persistMatchResult(
     return 'UNMATCHED';
   }
 
-  const autoMatch = match.outcome === 'AUTO_MATCHED' && !humanRejected.has(match.candidates[0].transactionId);
   const winner = writable[0];
+  const topCandidate = match.candidates[0];
+
+  // `writable` is non-empty here (the empty case returned above), but the compiler cannot
+  // know that from an array index, and nor could a future edit that changes the guard.
+  // Deriving `autoMatch` from the same value the loop below compares against removes the
+  // possibility of the two disagreeing.
+  const autoMatch =
+    match.outcome === 'AUTO_MATCHED' &&
+    winner !== undefined &&
+    topCandidate !== undefined &&
+    !humanRejected.has(topCandidate.transactionId);
 
   // Amounts for the candidates, read once outside the write transaction: the
   // verification decision needs the charge value, and a per-candidate lookup inside the
@@ -358,7 +385,7 @@ export async function persistMatchResult(
   try {
     return await prisma.$transaction(async (tx) => {
       for (const candidate of writable) {
-        const isWinner = autoMatch && candidate.transactionId === winner.transactionId;
+        const isWinner = autoMatch && candidate.transactionId === winner?.transactionId;
         // An automatic attachment is the one category no human has looked at. Whether it
         // needs an independent read is decided here, at the moment it is made, for the
         // same reason a human confirmation's is.
@@ -397,6 +424,7 @@ export async function persistMatchResult(
           tx.transaction,
           winner.transactionId,
           documentId,
+          tx,
         );
 
         if (claimed) {
@@ -435,6 +463,12 @@ export async function persistMatchResult(
         return 'NEEDS_REVIEW' as DocumentStatus;
       }
 
+      // Every charge that just gained or kept a candidate row.
+      await recomputeDocumentationStatuses(
+        tx,
+        writable.map((candidate) => candidate.transactionId),
+      );
+
       await tx.document.update({
         where: { id: documentId },
         data: { status: 'NEEDS_REVIEW', failureReason: match.reason },
@@ -445,7 +479,7 @@ export async function persistMatchResult(
     if (isUniqueConstraintViolation(error)) {
       log.warn('Ingestion: transaction was claimed concurrently; routing to review', {
         documentId,
-        transactionId: winner.transactionId,
+        transactionId: winner?.transactionId ?? null,
       });
       await prisma.$transaction(async (tx) => {
         for (const candidate of writable) {

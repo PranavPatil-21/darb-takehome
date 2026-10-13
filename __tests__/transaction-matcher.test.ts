@@ -50,7 +50,7 @@ describe('edge case 1: exact match', () => {
 
     expect(result.outcome).toBe('AUTO_MATCHED');
     expect(result.candidates).toHaveLength(1);
-    expect(result.candidates[0].confidence).toBeGreaterThanOrEqual(AUTO_MATCH_THRESHOLD);
+    expect(result.candidates[0]!.confidence).toBeGreaterThanOrEqual(AUTO_MATCH_THRESHOLD);
   });
 
   it('never stores a null in the breakdown — the contract is Record<string, number>', () => {
@@ -58,7 +58,7 @@ describe('edge case 1: exact match', () => {
     // omitted from the object entirely; it is never present with a null or zero value.
     const sparse = baseDocument({ cardLast4: null, documentDate: null });
 
-    const [candidate] = matchDocument(sparse, [baseTransaction()]).candidates;
+    const candidate = matchDocument(sparse, [baseTransaction()]).candidates[0]!;
 
     for (const value of Object.values(candidate.signals)) {
       expect(typeof value).toBe('number');
@@ -67,7 +67,7 @@ describe('edge case 1: exact match', () => {
   });
 
   it('publishes a per-signal breakdown so the score is explainable', () => {
-    const [candidate] = matchDocument(baseDocument(), [baseTransaction()]).candidates;
+    const candidate = matchDocument(baseDocument(), [baseTransaction()]).candidates[0]!;
 
     expect(candidate.signals).toEqual(
       expect.objectContaining({
@@ -90,7 +90,7 @@ describe('edge case 1: exact match', () => {
     const result = matchDocument(baseDocument(), [...noise, correct]);
 
     expect(result.outcome).toBe('AUTO_MATCHED');
-    expect(result.candidates[0].transactionId).toBe(7);
+    expect(result.candidates[0]!.transactionId).toBe(7);
   });
 });
 
@@ -115,7 +115,7 @@ describe('edge case 2: ambiguous same-amount same-day same-chain', () => {
     const result = matchDocument(baseDocument(), twins);
 
     expect(result.candidates).toHaveLength(2);
-    expect(result.candidates[0].confidence).toBeGreaterThanOrEqual(result.candidates[1].confidence);
+    expect(result.candidates[0]!.confidence).toBeGreaterThanOrEqual(result.candidates[1]!.confidence);
   });
 
   it('does not route to review when the leader is clear of the runner-up', () => {
@@ -141,14 +141,34 @@ describe('edge case 3: tip and rounding tolerance', () => {
     const result = matchDocument(doc, [txn]);
 
     expect(result.outcome).toBe('NEEDS_REVIEW');
-    expect(result.candidates[0].signals.amount).toBeGreaterThan(0.5);
-    expect(result.candidates[0].signals.amount).toBeLessThan(0.9);
+    expect(result.candidates[0]!.signals.amount).toBeGreaterThan(0.5);
+    expect(result.candidates[0]!.signals.amount).toBeLessThan(0.9);
+  });
+
+  it('holds the tip case in review whatever the acquirer string looks like', () => {
+    // The outcome must be a property of the engine, not of how the acquirer happened to
+    // abbreviate the merchant. `NAJD VILLAGE REST RUH` scored 0.8435 against a 0.85
+    // threshold — review by 0.0065 — while `NAJD VILLAGE RESTAURANT RUH` scored 0.896
+    // and silently auto-attached a 57.50 receipt to a 63.25 charge.
+    const doc = baseDocument({ totalAmount: 5750, merchantName: 'Najd Village Restaurant' });
+
+    for (const merchantName of [
+      'NAJD VILLAGE REST RUH',
+      'NAJD VILLAGE RESTAURANT RUH',
+      'NAJD VILLAGE',
+      'NAJD VILLAGE RESTAURANT RIYADH',
+    ]) {
+      const result = matchDocument(doc, [baseTransaction({ amount: 6325, merchantName })]);
+
+      expect(result.outcome).toBe('NEEDS_REVIEW');
+      expect(result.reason).toBe('UNEXPLAINED_AMOUNT_GAP');
+    }
   });
 
   it('treats a few halalas of VAT rounding as effectively exact', () => {
     const result = matchDocument(baseDocument({ totalAmount: 12498 }), [baseTransaction()]);
 
-    expect(result.candidates[0].signals.amount).toBeGreaterThan(0.95);
+    expect(result.candidates[0]!.signals.amount).toBeGreaterThan(0.95);
     expect(result.outcome).toBe('AUTO_MATCHED');
   });
 
@@ -157,13 +177,13 @@ describe('edge case 3: tip and rounding tolerance', () => {
     // and must not score the same.
     const over = matchDocument(baseDocument({ totalAmount: 10000 }), [
       baseTransaction({ amount: 11000 }),
-    ]).candidates[0];
+    ]).candidates[0]!;
     const under = matchDocument(baseDocument({ totalAmount: 11000 }), [
       baseTransaction({ amount: 10000 }),
     ]);
 
     expect(over.signals.amount).toBeGreaterThan(0.5);
-    expect(under.candidates[0]?.signals.amount ?? 0).toBeLessThan(over.signals.amount as number);
+    expect(under.candidates[0]?.signals.amount ?? 0).toBeLessThan(over.signals.amount ?? 0);
   });
 
   it('vetoes a transaction whose amount is nowhere near the receipt', () => {
@@ -230,8 +250,8 @@ describe('edge case 6: unusable extraction', () => {
   it('survives a malformed document date instead of producing NaN scores', () => {
     const result = matchDocument(baseDocument({ documentDate: 'not-a-date' }), [baseTransaction()]);
 
-    expect(result.candidates[0].signals.date).toBeUndefined();
-    expect(Number.isFinite(result.candidates[0].confidence)).toBe(true);
+    expect(result.candidates[0]!.signals.date).toBeUndefined();
+    expect(Number.isFinite(result.candidates[0]!.confidence)).toBe(true);
   });
 
   it('never returns NaN confidence even when every signal is missing', () => {
@@ -267,8 +287,8 @@ describe('one confirmed document per transaction', () => {
   it('still surfaces the candidate so a reviewer can judge the possible duplicate', () => {
     const result = matchDocument(baseDocument(), [baseTransaction({ hasConfirmedDocument: true })]);
 
-    expect(result.candidates[0].transactionId).toBe(1);
-    expect(result.candidates[0].confidence).toBeGreaterThanOrEqual(MIN_CANDIDATE_THRESHOLD);
+    expect(result.candidates[0]!.transactionId).toBe(1);
+    expect(result.candidates[0]!.confidence).toBeGreaterThanOrEqual(MIN_CANDIDATE_THRESHOLD);
   });
 
   it('prefers an undocumented transaction over an equally-scoring documented one', () => {
@@ -277,7 +297,7 @@ describe('one confirmed document per transaction', () => {
       baseTransaction({ id: 2, hasConfirmedDocument: false }),
     ]);
 
-    expect(result.candidates[0].transactionId).toBe(2);
+    expect(result.candidates[0]!.transactionId).toBe(2);
   });
 });
 
@@ -317,9 +337,9 @@ describe('sender scoping', () => {
 
 describe('signal handling', () => {
   it('omits a missing card number from the breakdown rather than scoring it zero', () => {
-    const withCard = matchDocument(baseDocument(), [baseTransaction()]).candidates[0];
+    const withCard = matchDocument(baseDocument(), [baseTransaction()]).candidates[0]!;
     const withoutCard = matchDocument(baseDocument({ cardLast4: null }), [baseTransaction()])
-      .candidates[0];
+      .candidates[0]!;
 
     expect('cardLast4' in withoutCard.signals).toBe(false);
     // Dropping a signal must not be punished as if it contradicted — the remaining
@@ -346,8 +366,8 @@ describe('signal handling', () => {
 
   it('decays the date signal as the document drifts from the transaction', () => {
     const scoreAt = (iso: string) =>
-      matchDocument(baseDocument({ documentDate: iso }), [baseTransaction()]).candidates[0]
-        .signals.date as number;
+      matchDocument(baseDocument({ documentDate: iso }), [baseTransaction()]).candidates[0]!
+        .signals.date ?? 0;
 
     expect(scoreAt('2025-06-14T00:00:00Z')).toBe(1);
     expect(scoreAt('2025-06-13T00:00:00Z')).toBeLessThan(1);
@@ -386,7 +406,7 @@ describe('signal handling', () => {
     const sharp = matchDocument(baseDocument({ extractionConfidence: 0.99 }), [baseTransaction()]);
     const blurry = matchDocument(baseDocument({ extractionConfidence: 0.3 }), [baseTransaction()]);
 
-    expect(blurry.candidates[0].confidence).toBe(sharp.candidates[0].confidence);
+    expect(blurry.candidates[0]!.confidence).toBe(sharp.candidates[0]!.confidence);
   });
 });
 

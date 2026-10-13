@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import type { ZodError } from 'zod';
-import { log } from '@/lib/logger';
 
 /**
  * Webhook response helpers.
@@ -35,15 +34,18 @@ export function accepted(body: Record<string, unknown>) {
 }
 
 /**
- * The last line of defence. If something escapes every guard in the pipeline we still
- * acknowledge the webhook — losing our own processing is strictly better than asking the
- * provider to replay a message forever.
+ * Accepted what we could, but at least one item must be sent again.
+ *
+ * The distinction this carries is the whole reason it exists. A `200` tells the provider
+ * the message was delivered, and it will never redeliver — so an item we could not read
+ * is lost, permanently and silently. When there are no bytes there is also no content
+ * hash, and therefore no `Document` row to park in a failed state: the receipt would
+ * survive only as a log line.
+ *
+ * `503` asks for the batch again. Redelivering the whole batch is safe precisely because
+ * ingestion is idempotent on both the provider's message id and the file's content hash,
+ * so the items that did succeed resolve to `DUPLICATE` rather than doubling.
  */
-export function acceptedDespiteFailure(context: string, error: unknown) {
-  const detail = error instanceof Error ? error.message : String(error);
-  log.error(`${context}: unexpected failure, acknowledging anyway`, { detail });
-  return NextResponse.json(
-    { accepted: true, processed: false, error: 'Accepted but not processed; see server logs.' },
-    { status: 200 },
-  );
+export function retryLater(body: Record<string, unknown>) {
+  return NextResponse.json({ accepted: true, ...body }, { status: 503 });
 }

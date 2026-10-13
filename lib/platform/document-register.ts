@@ -2,7 +2,6 @@ import type { PrismaClient } from '@prisma/client';
 import prismaDefault from '@/lib/prisma';
 import { clientScopeFilter, type Actor } from '@/lib/platform/identity';
 import type { DocumentStatus } from '@/lib/domain/enums';
-import { exceptionAction, exceptionLabel } from '@/lib/content/messages';
 
 /**
  * The inbox side of the ledger: everything that arrived, whatever became of it.
@@ -30,8 +29,10 @@ export interface DocumentRow {
 }
 
 export interface DocumentFilter {
-  status?: DocumentStatus;
-  query?: string;
+  // `| undefined` is explicit because callers build these straight from `searchParams`,
+  // where an absent filter is literally the value `undefined` rather than a missing key.
+  status?: DocumentStatus | undefined;
+  query?: string | undefined;
 }
 
 export interface DocumentRegisterResult {
@@ -51,21 +52,23 @@ export async function getDocumentRegister(
   const scope = clientScopeFilter(actor);
   const query = filter.query?.trim();
 
-  const [documents, grouped] = await Promise.all([
+  const where = {
+    ...scope,
+    ...(filter.status ? { status: filter.status } : {}),
+    ...(query
+      ? {
+          OR: [
+            { merchantName: { contains: query } },
+            { senderIdentifier: { contains: query } },
+            { vatNumber: { contains: query } },
+          ],
+        }
+      : {}),
+  };
+
+  const [documents, grouped, matchedCount] = await Promise.all([
     prisma.document.findMany({
-      where: {
-        ...scope,
-        ...(filter.status ? { status: filter.status } : {}),
-        ...(query
-          ? {
-              OR: [
-                { merchantName: { contains: query } },
-                { senderIdentifier: { contains: query } },
-                { vatNumber: { contains: query } },
-              ],
-            }
-          : {}),
-      },
+      where,
       orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
       take: PAGE_LIMIT + 1,
       select: {
@@ -83,6 +86,11 @@ export async function getDocumentRegister(
       },
     }),
     prisma.document.groupBy({ by: ['status'], where: scope, _count: { _all: true } }),
+    // A real count over the whole filtered set, not the length of the page.
+    // `Math.min(documents.length, PAGE_LIMIT)` reported 200 whatever the true total was,
+    // so the register could silently stop at 200 of 500 with the number agreeing that
+    // there were 200. The charge register has always counted properly; this matches it.
+    prisma.document.count({ where }),
   ]);
 
   // One lookup for every sender on the page rather than a join per row: the label is a
@@ -112,88 +120,8 @@ export async function getDocumentRegister(
       failureReason: d.failureReason,
       attachedTransactionId: d.confirmedForTransaction?.id ?? null,
     })),
-    matchedCount: documents.length,
+    matchedCount,
     statusCounts,
     truncated: documents.length > PAGE_LIMIT,
   };
 }
-
-export interface ExceptionRow extends DocumentRow {
-  /** Which kind of stuck this is, because each needs a different person. */
-  kind: 'UNREADABLE' | 'UNKNOWN_SENDER' | 'DUPLICATE_CLAIM';
-  whatToDo: string;
-}
-
-/**
- * Everything the happy path could not place.
- *
- * Three genuinely distinct conditions, kept apart because they route to different people.
- * An unreadable scan is a problem for whoever can re-photograph it; an unregistered sender
- * is an onboarding gap somebody with admin access closes in a minute; a duplicate claim is
- * a judgement call for a reviewer. Collapsing them into one "problems" list is how a
- * backlog becomes a bin nobody opens.
- */
-export async function getExceptions(
-  actor: Actor,
-  prisma: PrismaClient = prismaDefault,
-): Promise<ExceptionRow[]> {
-  const scope = clientScopeFilter(actor);
-
-  const documents = await prisma.document.findMany({
-    where: {
-      OR: [
-        { status: 'FAILED' },
-        { status: 'UNMATCHED', clientId: null },
-        { status: 'NEEDS_REVIEW', failureReason: 'TRANSACTION_ALREADY_DOCUMENTED' },
-      ],
-      ...scope,
-    },
-    orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }],
-    select: {
-      id: true,
-      source: true,
-      senderIdentifier: true,
-      merchantName: true,
-      totalAmount: true,
-      currency: true,
-      documentDate: true,
-      receivedAt: true,
-      status: true,
-      failureReason: true,
-      clientId: true,
-      confirmedForTransaction: { select: { id: true } },
-    },
-  });
-
-  return documents.map((d) => {
-    const kind: ExceptionRow['kind'] =
-      d.status === 'FAILED'
-        ? 'UNREADABLE'
-        : d.clientId === null
-          ? 'UNKNOWN_SENDER'
-          : 'DUPLICATE_CLAIM';
-
-    return {
-      id: d.id,
-      source: d.source,
-      senderIdentifier: d.senderIdentifier,
-      senderLabel: null,
-      merchantName: d.merchantName,
-      totalAmount: d.totalAmount,
-      currency: d.currency,
-      documentDate: d.documentDate,
-      receivedAt: d.receivedAt,
-      status: d.status,
-      failureReason: d.failureReason,
-      attachedTransactionId: d.confirmedForTransaction?.id ?? null,
-      kind,
-      whatToDo: exceptionAction(kind),
-    };
-  });
-}
-
-export const EXCEPTION_KIND_LABEL: Readonly<Record<ExceptionRow['kind'], string>> = {
-  get UNREADABLE() { return exceptionLabel('UNREADABLE'); },
-  get UNKNOWN_SENDER() { return exceptionLabel('UNKNOWN_SENDER'); },
-  get DUPLICATE_CLAIM() { return exceptionLabel('DUPLICATE_CLAIM'); },
-};

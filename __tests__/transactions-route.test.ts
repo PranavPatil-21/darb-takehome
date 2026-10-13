@@ -13,10 +13,18 @@ import { resetDatabase, seedMinimalWorld, testPrisma } from './helpers/db';
  * without re-running OCR.
  */
 
-const post = (body: unknown) =>
+/**
+ * Every call carries a fresh Idempotency-Key. The endpoint creates financial records and
+ * now requires one; a replay of the *same* key is covered in rematch-bounds.test.ts.
+ */
+let keySeq = 0;
+const post = (body: unknown, idempotencyKey?: string) =>
   new Request('http://localhost/api/transactions', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: {
+      'content-type': 'application/json',
+      'idempotency-key': idempotencyKey ?? `test-batch-${(keySeq += 1)}`,
+    },
     body: typeof body === 'string' ? body : JSON.stringify(body),
   });
 
@@ -207,5 +215,49 @@ describe('re-match on arrival', () => {
     expect(await testPrisma.documentMatch.count({ where: { documentId: orphan.documentId } })).toBe(
       1,
     );
+  });
+});
+
+describe('the idempotency key is claimed before the charges exist', () => {
+  /**
+   * The key was written *after* the charges, so the window between them was unprotected:
+   * concurrent retries of one key each passed the "have I seen this?" pre-check, and each
+   * created its own charges. The losing writes were not even recoverable — the stored key
+   * records only one batch's ids, so a later replay returns a subset and the rest are
+   * unreachable.
+   *
+   * Ingestion already solves this one directory over, by catching the unique-constraint
+   * violation rather than pre-checking. This is the same guarantee, on money.
+   */
+  const charge = {
+    clientId: 1,
+    cardLast4: '4412',
+    driverPhone: '966551234567',
+    merchantName: 'CONCURRENT PROBE',
+    amount: 7700,
+    currency: 'SAR',
+    transactionAt: '2025-06-20T10:00:00Z',
+  };
+
+  it('creates one set of charges when the same key arrives four times at once', async () => {
+    const body = { transactions: [charge] };
+
+    const responses = await Promise.all(
+      Array.from({ length: 4 }, () => transactionsPost(post(body, 'concurrent-probe-1'))),
+    );
+
+    // 201 for the request that claimed the key, 200 for a replay that found the finished
+    // record, 409 for one that found the claim still in flight. All three are correct
+    // answers; what must never happen is two requests both creating charges.
+    for (const response of responses) {
+      expect([200, 201, 409]).toContain(response.status);
+    }
+    // Exactly one winner — the rest were told the key was taken, not handed a 500.
+    expect(responses.filter((r) => r.status === 201)).toHaveLength(1);
+
+    const created = await testPrisma.transaction.count({
+      where: { merchantName: 'CONCURRENT PROBE' },
+    });
+    expect(created).toBe(1);
   });
 });

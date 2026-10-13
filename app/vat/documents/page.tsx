@@ -45,7 +45,7 @@ export default async function DocumentRegisterPage({
   };
 
   return (
-    <Page>
+    <Page width="wide">
       <PageHeader
         title={t('documents.title')}
         description={t('documents.subtitle')}
@@ -95,11 +95,17 @@ export default async function DocumentRegisterPage({
           }
         />
       ) : (
-        <ul className="mt-5 divide-y divide-border/60 border-y border-border/60">
+        <ul className="mt-5 divide-y overflow-hidden rounded-xl border bg-card shadow-xs">
           {register.rows.map((row) => (
-            <li key={row.id} className="py-3">
+            // The whole row is the target. A register you can read but not open is a
+            // report, and this one exists to be the way into a document's journey.
+            <li key={row.id} className="transition-colors hover:bg-accent/40">
+              <Link
+                href={`${modulePath('documents')}/${row.id}`}
+                className="block px-5 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+              >
               <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                <span className="min-w-0 flex-1 truncate text-sm">
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">
                   {row.merchantName ?? t('common.unreadableDocument')}
                 </span>
                 <span className="flex shrink-0 items-center gap-3">
@@ -116,17 +122,10 @@ export default async function DocumentRegisterPage({
               <p className="mt-1 text-xs text-muted-foreground">
                 {SOURCE_LABEL[row.source] ?? row.source}
                 {row.senderLabel ? ` · ${row.senderLabel}` : ` · ${row.senderIdentifier}`}
-                {row.attachedTransactionId ? (
-                  <>
-                    {' · '}
-                    <Link
-                      href={modulePath('transactions', String(row.attachedTransactionId))}
-                      className="underline underline-offset-4"
-                    >
-                      attached to a charge
-                    </Link>
-                  </>
-                ) : null}
+                {/* Stated, not linked. The row itself is now a link, and a link inside a
+                    link is invalid markup — the document's own page carries the way
+                    through to the charge. */}
+                {row.attachedTransactionId ? ' · attached to a charge' : null}
               </p>
 
               {row.failureReason && row.status !== 'MATCHED' ? (
@@ -134,10 +133,18 @@ export default async function DocumentRegisterPage({
                   {reasonText(row.failureReason)}
                 </p>
               ) : null}
+              </Link>
             </li>
           ))}
         </ul>
       )}
+
+      {register.truncated ? (
+        <p className="mt-3 text-xs text-muted-foreground">
+          Showing the first {register.rows.length} of {register.matchedCount}. Narrow the filter
+          to see the rest.
+        </p>
+      ) : null}
     </Page>
   );
 }

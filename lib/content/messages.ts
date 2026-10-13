@@ -31,14 +31,12 @@ export const DEFAULT_MESSAGES = {
   'nav.assurance': 'Assurance',
   'nav.charges': 'Charges',
   'nav.documents': 'Documents',
-  'nav.exceptions': 'Exceptions',
   'nav.actingAs': 'Acting as',
   'nav.overview.hint': 'Coverage, exposure and what needs attention',
   'nav.review.hint': 'Documents the matcher would not decide on its own',
   'nav.assurance.hint': 'Attachments awaiting an independent sign-off',
   'nav.charges.hint': 'Every card charge and its documentation status',
   'nav.documents.hint': 'Everything WhatsApp and email delivered',
-  'nav.exceptions.hint': 'What the happy path could not place',
 
   // Why an attachment was, or was not, selected for sign-off.
   'verify.off': 'Independent sign-off is not enabled.',
@@ -53,6 +51,8 @@ export const DEFAULT_MESSAGES = {
   'trigger.NOT_REQUIRED': 'Not required',
 
   // Notes beside a compared field, when the difference needs explaining.
+  'compare.note.currencyMismatch':
+    'The receipt and the charge are in different currencies — these are not the same payment.',
   'compare.note.noAmount': 'No total could be read from this document.',
   'compare.note.rounding': 'Differs by a few halalas — VAT rounding.',
   'compare.note.noDate': 'No date could be read from this document.',
@@ -65,6 +65,7 @@ export const DEFAULT_MESSAGES = {
   'result.denied.decide': 'You do not have permission to decide matches',
   'result.denied.verify': 'You do not have permission to sign off attachments',
   'result.alreadyRejected': 'This candidate was already rejected.',
+  'result.alreadyDecided': 'Another reviewer decided this one a moment ago.',
   'result.noneLeft': 'Rejected. No candidates left — the document is back in the unmatched pool.',
   'result.alreadySignedOff': 'Already signed off.',
   'result.signedOff': 'Signed off.',
@@ -85,7 +86,8 @@ export const DEFAULT_MESSAGES = {
   'overview.desk.review': '{count} document needs a decision|{count} documents need a decision',
   'overview.desk.assurance':
     '{count} attachment needs sign-off|{count} attachments need sign-off',
-  'overview.desk.exceptions': '{count} exception|{count} exceptions',
+  'overview.desk.blocked':
+    '{count} document needs more than a decision|{count} documents need more than a decision',
   'overview.spend.title': 'Where the period’s spend sits',
   'overview.spend.hint': 'By value, not by count — one large charge outweighs ten small ones.',
   'overview.ageing.title': 'How long the gap has been open',
@@ -99,8 +101,20 @@ export const DEFAULT_MESSAGES = {
 
   /* ---- review ----------------------------------------------------------- */
   'review.title': 'Review queue',
-  'review.subtitle':
-    'One document the matcher would not decide on its own.|{count} documents the matcher would not decide on its own.',
+  /*
+   * Counts the two kinds separately. "Documents the matcher would not decide" described
+   * the queue accurately while it held only NEEDS_REVIEW; now that it also holds things
+   * no decision can settle, one number would flatter the first figure and misdescribe
+   * the second.
+   */
+  'review.subtitle': 'One document is waiting.|{count} documents are waiting.',
+  /* Two keys rather than one, because `t` pluralises on `count` and this sentence has
+     two independent counts to agree with. */
+  'review.subtitle.decidable': '{count} needs a decision|{count} need a decision',
+  'review.subtitle.blocked': '{count} needs something else|{count} need something else',
+  'review.emptyFiltered.title': 'Nothing left of this kind',
+  'review.emptyFiltered.body':
+    'You have cleared every document in this group. {count} others are still waiting under the other kinds.',
   'review.empty.title': 'Nothing waiting for you',
   'review.empty.body':
     'Every document either attached itself to a charge or is still waiting for one to post. Nothing here needs a decision.',
@@ -113,6 +127,8 @@ export const DEFAULT_MESSAGES = {
   'review.queue.aria': 'Documents waiting for review',
   'review.candidates.one': 'The charge it would attach to',
   'review.candidates.many': 'Which charge is this?',
+  /* No charge is in play and none can be picked — so the heading does not ask. */
+  'review.candidates.blocked': 'What to do with this one',
   'review.candidates.none':
     'Every candidate has been decided. This document leaves the queue on refresh.',
   'review.attach': 'Attach to {charge}',
@@ -125,13 +141,24 @@ export const DEFAULT_MESSAGES = {
   'review.rawText.whatsapp': 'What the driver sent',
   'review.rawText.email': 'What the supplier sent',
   'review.engine.summary': 'How the engine scored this',
+  'review.queue.waiting': 'Waiting',
+  'review.blocked.title': 'Nothing to decide here',
 
   /* ---- ambiguity -------------------------------------------------------- */
-  'ambiguity.title': 'These charges are equally good matches',
-  'ambiguity.differs':
+  /*
+   * Two headings, because "equally good" is a claim about the scores and is only true
+   * when they actually tie. Saying it of a clear leader would overstate the difficulty
+   * and invite a reviewer to toss a coin over a decision the engine had nearly made.
+   */
+  'ambiguity.title.tied':
+    'This charge is an equally good match|{count} charges are equally good matches',
+  'ambiguity.title.competing': 'Another charge is in the running|{count} charges are in the running',
+  'ambiguity.differs.tied':
     'Everything the receipt can be compared on is identical. They differ only in {fields} — check the paper receipt for that, not the figures below.',
+  'ambiguity.differs':
+    'They differ in {fields}. Check that against the paper receipt before attaching.',
   'ambiguity.identical':
-    'Nothing in either charge separates them. The receipt cannot decide this — rejecting both and asking the driver which purchase it was is safer than guessing.',
+    'Nothing in these charges separates them. The receipt cannot decide this — rejecting them and asking the driver which purchase it was is safer than guessing.',
 
   /* ---- comparison phrases ----------------------------------------------- */
   'compare.receipt': 'Receipt',
@@ -230,6 +257,24 @@ export const DEFAULT_MESSAGES = {
     'A rejected pairing is permanent — the matcher will not propose it again, though the document stays open to other charges.',
   'charge.history.title': 'History',
   'charge.history.hint': 'Every decision taken about the attached receipt, in order.',
+
+  /* Why the trail is empty, said out loud. A section that vanishes when it has nothing
+     reads as "nothing happened", which is a different claim and usually a false one. */
+  'charge.history.none.unattached':
+    'Nothing has been attached to this charge yet, so there is nothing to record.',
+  'charge.history.none.automatic':
+    'Attached by the matcher with no human step, and before the decision trail recorded automatic attachments. Anything done to it from now on appears here.',
+  'charge.history.none.imported':
+    'This attachment predates the decision trail — imported or seeded rather than decided in the queue. Anything done to it from now on appears here.',
+
+  /* ---- sign-off state on a charge --------------------------------------- */
+  'charge.signOff.notRequired': 'No independent sign-off required',
+  'charge.signOff.pending': 'Waiting for independent sign-off',
+  'charge.signOff.upheld': 'Signed off',
+  'charge.signOff.overturned': 'Overturned on review',
+  'charge.evidence.title': 'Why this was attached',
+  'charge.evidence.automatic': 'Attached by the matcher without a human step.',
+  'charge.evidence.human': 'Attached by a reviewer.',
   /* ---- why the matcher stopped --------------------------------------------
    * These were previously a separate table in lib/format.ts. They belong here for the
    * same reason as every other sentence: one place to review the wording, one mechanism
@@ -243,6 +288,8 @@ export const DEFAULT_MESSAGES = {
   'reason.WEAK_EVIDENCE':
     'No amount and no card number could be read — merchant and date alone cannot attach money.',
   'reason.MID_CONFIDENCE': 'Plausible but short of the auto-match threshold.',
+  'reason.UNEXPLAINED_AMOUNT_GAP':
+    'The receipt total and the charge do not agree, and the difference is more than VAT rounding.',
   'reason.NO_PLAUSIBLE_CANDIDATE':
     'No transaction in scope came close enough to be worth reviewing.',
   'reason.NO_CANDIDATE_TRANSACTIONS':
@@ -261,6 +308,8 @@ export const DEFAULT_MESSAGES = {
   'nextStep.WEAK_EVIDENCE':
     'The receipt shows no total and no card number. Confirm only if you can tell from the receipt itself which charge this is.',
   'nextStep.MID_CONFIDENCE': 'Check the difference flagged below, then attach it or reject it.',
+  'nextStep.UNEXPLAINED_AMOUNT_GAP':
+    'Usually a tip or a service charge. Confirm the receipt covers this charge; if the gap is not explained, reject it.',
 
   /* ---- document status, in the reader's words ----------------------------- */
   'docStatus.MATCHED': 'Attached',
@@ -297,16 +346,49 @@ export const DEFAULT_MESSAGES = {
   'age.31-60': '1 to 2 months',
   'age.60+': 'Over 2 months',
 
-  /* ---- exception kinds ---------------------------------------------------- */
-  'exception.UNREADABLE': 'Could not be read',
-  'exception.UNREADABLE.action':
-    'Nothing usable was read. Ask the driver to send a clearer photo.',
-  'exception.UNKNOWN_SENDER': 'Sender not registered',
-  'exception.UNKNOWN_SENDER.action':
-    'Nobody has registered this sender, so the document cannot be scoped to a client. Register them and it will be matched automatically.',
-  'exception.DUPLICATE_CLAIM': 'Charge already documented',
-  'exception.DUPLICATE_CLAIM.action':
-    'The best-matching charge already has a receipt. One of the two is wrong — decide which in the review queue.',
+  /* ---- work-queue kinds --------------------------------------------------- */
+  /*
+   * Three strings per kind: what the group is called, why these documents are in it, and
+   * what the person should actually do. The third is the one that matters — a queue that
+   * names a problem without naming its remedy is a list of complaints.
+   */
+  'work.CHOOSE_CHARGE': 'Pick the right charge',
+  'work.CHOOSE_CHARGE.why':
+    'Several charges fit this receipt equally well, so the matcher refused to guess.',
+  'work.CHOOSE_CHARGE.next':
+    'Compare what separates them — usually the branch or the time of day — against the paper receipt.',
+
+  'work.CHECK_FIGURES': 'Check the figures',
+  'work.CHECK_FIGURES.why':
+    'One charge leads, but not clearly enough to attach it to money without a person looking.',
+  'work.CHECK_FIGURES.next': 'Read the amount and card number off the receipt and confirm they match.',
+
+  'work.WEAK_EVIDENCE': 'Not enough was read',
+  'work.WEAK_EVIDENCE.why':
+    'The merchant and the date agree, and nothing else could be read from the document.',
+  'work.WEAK_EVIDENCE.next':
+    'A merchant and a date are not enough on their own — check the total against the charge before attaching.',
+
+  'work.POSSIBLE_DUPLICATE': 'Possible duplicate',
+  'work.POSSIBLE_DUPLICATE.why': 'The best-matching charge already has a receipt attached.',
+  'work.POSSIBLE_DUPLICATE.next':
+    'One of the two is wrong. Reject the existing attachment first if this document is the correct one.',
+
+  'work.NO_CHARGE_FOUND': 'No matching charge',
+  'work.NO_CHARGE_FOUND.why':
+    'Nothing in the window is a plausible match — often because the charge has not posted yet.',
+  'work.NO_CHARGE_FOUND.next':
+    'No action needed yet. These are re-matched automatically as charges arrive; chase the acquirer if one stays here for weeks.',
+
+  'work.UNREADABLE': 'Could not be read',
+  'work.UNREADABLE.why': 'Nothing usable came out of the document.',
+  'work.UNREADABLE.next': 'Ask the driver to send a clearer photo. Nothing here can be attached as it stands.',
+
+  'work.SENDER_UNKNOWN': 'Sender not registered',
+  'work.SENDER_UNKNOWN.why':
+    'Nobody has registered this sender, so the document cannot be scoped to a client.',
+  'work.SENDER_UNKNOWN.next':
+    'Register the sender. The document is matched automatically once it can be scoped.',
 
   /* ---- audit actions ------------------------------------------------------ */
   'audit.AUTO_MATCHED': 'Attached automatically by the matcher',
@@ -386,6 +468,10 @@ export function t(key: MessageKey, params: MessageParams = {}): string {
         : forms[1]
       : forms[0];
 
+  // A pluralised key with no forms is a content bug, not a runtime one: fall back to the
+  // raw key so the screen still renders and the gap is visible.
+  if (chosen === undefined) return key;
+
   return chosen.replace(/\{(\w+)\}/g, (whole, name: string) =>
     params[name] === undefined ? whole : String(params[name]),
   );
@@ -412,8 +498,9 @@ export const docStatusHint = (code: string) => lookup(`docStatus`, `${code}.hint
 export const chargeStatusLabel = (code: string) => lookup('chargeStatus', code);
 export const chargeStatusHint = (code: string) => lookup('chargeStatus', `${code}.hint`, '');
 export const ageLabel = (code: string) => lookup('age', code);
-export const exceptionLabel = (code: string) => lookup('exception', code);
-export const exceptionAction = (code: string) => lookup('exception', `${code}.action`, '');
+export const workKindLabel = (code: string) => lookup('work', code);
+export const workKindWhy = (code: string) => lookup('work', `${code}.why`, '');
+export const workKindNextStep = (code: string) => lookup('work', `${code}.next`, '');
 export const auditText = (code: string) => lookup('audit', code);
 export const signalLabel = (code: string) => lookup('signal', code);
 export const sourceLabel = (code: string) => lookup('source', code);

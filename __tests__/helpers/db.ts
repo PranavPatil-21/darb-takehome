@@ -1,15 +1,30 @@
-import { PrismaClient } from '@prisma/client';
+import prisma from '@/lib/prisma';
 
 /**
- * A Prisma client pinned to the test database, plus the fixtures the integration tests
- * build on. Kept separate from `prisma/seed.ts` so a change to the demo seed can never
- * silently move a test's goalposts.
+ * The client the tests build fixtures with — **the same instance the route handlers and
+ * server actions use**, not a second one pointed at the same file.
+ *
+ * It used to be its own `new PrismaClient({ datasources: … 'file:./test.db' })`. That gave
+ * one SQLite file two connection pools with independent write pipelines, and four suites
+ * used both in the same test. The result was a suite that passed roughly one run in five:
+ * `resetDatabase`'s ordered deletes raced against writes still in flight on the other
+ * pool, surfacing as `Foreign key constraint violated` on `client.deleteMany()` and
+ * `Unique constraint failed on (id)` on `transaction.createMany()` — failures that look
+ * like product bugs and are not. A flaky gate is worse than a missing one, because it
+ * teaches everyone to re-run until green.
+ *
+ * `__tests__/setup.ts` points `DATABASE_URL` at `file:./test.db` before any module loads
+ * `lib/prisma`, so this singleton is already the test database. One pool, one writer,
+ * deterministic ordering.
  */
-export const testPrisma = new PrismaClient({
-  datasources: { db: { url: 'file:./test.db' } },
-});
+export const testPrisma = prisma;
 
 export async function resetDatabase(): Promise<void> {
+  // Explicit: ReviewEvent deliberately has no foreign key to Document, so nothing
+  // cascades into it. That is the point — the trail outlives what it describes — but it
+  // means the reset has to name it.
+  await testPrisma.reviewEvent.deleteMany();
+  await testPrisma.transactionBatch.deleteMany();
   await testPrisma.documentMatch.deleteMany();
   await testPrisma.transaction.updateMany({ data: { confirmedDocumentId: null } });
   await testPrisma.document.deleteMany();
@@ -82,4 +97,21 @@ export async function seedMinimalWorld(): Promise<void> {
       },
     ],
   });
+}
+
+/**
+ * Recompute every charge's cached status from its live relations.
+ *
+ * Tests that build fixtures by writing `confirmedDocumentId` or match rows directly are
+ * doing what a data migration does: changing the inputs without going through the write
+ * paths that maintain the cache. They call this afterwards for the same reason a backfill
+ * exists — and `scripts/backfill-status.ts` is this function against a real database.
+ */
+export async function syncChargeStatuses(): Promise<void> {
+  const { recomputeDocumentationStatuses } = await import('@/lib/services/charge-status');
+  const ids = await testPrisma.transaction.findMany({ select: { id: true } });
+  await recomputeDocumentationStatuses(
+    testPrisma,
+    ids.map((row) => row.id),
+  );
 }

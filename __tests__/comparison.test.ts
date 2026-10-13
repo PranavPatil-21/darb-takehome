@@ -269,11 +269,11 @@ describe('describing what separates two charges', () => {
   });
 
   it('calls two outlets of one chain a difference of branch', () => {
-    const [difference] = chargeDifferences(
+    const difference = (chargeDifferences(
       charge(),
       charge({ merchantName: 'TAMIMI MARKETS 0012 RUH' }),
       merchantSimilarity,
-    );
+    ))[0]!;
     expect(difference.phrase).toBe('the branch');
   });
 
@@ -282,11 +282,11 @@ describe('describing what separates two charges', () => {
     // rendered as "the branch". A reviewer told that Panda and Nahdi "differ only in the
     // branch" has been actively misled on the one screen that exists to prevent a wrong
     // attachment.
-    const [difference] = chargeDifferences(
+    const difference = (chargeDifferences(
       charge({ merchantName: 'PANDA HYPERMARKET BR 220' }),
       charge({ merchantName: 'NAHDI PHARMACY 118' }),
       merchantSimilarity,
-    );
+    ))[0]!;
     expect(difference.phrase).toBe('the merchant');
   });
 
@@ -298,22 +298,22 @@ describe('describing what separates two charges', () => {
       charge({ transactionAt: new Date('2025-06-17T12:55:00Z') }),
       merchantSimilarity,
     );
-    expect(sameDay[0].phrase).toBe('the time of day');
+    expect(sameDay[0]!.phrase).toBe('the time of day');
 
     const otherDay = chargeDifferences(
       charge(),
       charge({ transactionAt: new Date('2025-06-20T12:10:00Z') }),
       merchantSimilarity,
     );
-    expect(otherDay[0].phrase).toBe('the date');
+    expect(otherDay[0]!.phrase).toBe('the date');
   });
 
   it('carries both values so the reader can see them, not just the field name', () => {
-    const [difference] = chargeDifferences(
+    const difference = (chargeDifferences(
       charge(),
       charge({ amount: 6_325 }),
       merchantSimilarity,
-    );
+    ))[0]!;
     expect(difference.left).toBe('45.00 SAR');
     expect(difference.right).toBe('63.25 SAR');
   });
@@ -329,5 +329,70 @@ describe('describing what separates two charges', () => {
       merchantSimilarity,
     );
     expect(differences.map((d) => d.field)).toEqual(['merchant', 'amount', 'card']);
+  });
+});
+
+describe('a currency mismatch is a difference, not an agreement', () => {
+  it('does not report two different currencies as agreeing', () => {
+    // The amount row compared the integers and never the currency, so a 100.00 USD
+    // receipt against a 100.00 SAR charge rendered both values side by side under a
+    // green "agrees" verdict — on the one screen whose job is to stop a wrong
+    // attachment. At roughly 3.75 SAR to the dollar these are not the same payment.
+    const rows = buildComparison(
+      doc({ totalAmount: 10_000, currency: 'USD' }),
+      charge({ amount: 10_000, currency: 'SAR' }),
+    );
+    const amount = rows.find((row) => row.field === 'amount');
+
+    expect(amount?.verdict).toBe('DIFFERS');
+    expect(amount?.note).toBeTruthy();
+  });
+
+  it('still agrees when the currencies match', () => {
+    const rows = buildComparison(
+      doc({ totalAmount: 10_000, currency: 'SAR' }),
+      charge({ amount: 10_000, currency: 'SAR' }),
+    );
+
+    expect(rows.find((row) => row.field === 'amount')?.verdict).toBe('AGREES');
+  });
+});
+
+describe('the review screen uses the same date window as the engine', () => {
+  /**
+   * `buildComparison` explains the matcher's decision to a reviewer. When it judges a
+   * date by a different rule than the engine used, it contradicts the thing it is there
+   * to explain — and it did: a flat seven-day constant marked an ordinary twenty-day-old
+   * supplier invoice as DIFFERS on a pairing the engine scored as plausible. Emailed
+   * invoices are the common case for this product.
+   */
+  const twentyDaysApart = {
+    doc: { documentDate: new Date('2025-06-10T00:00:00Z') },
+    charge: { transactionAt: new Date('2025-06-30T10:00:00Z') },
+  };
+
+  const dateVerdict = (documentType: string, source: string) =>
+    buildComparison(
+      doc({ ...twentyDaysApart.doc, documentType, source }),
+      charge(twentyDaysApart.charge),
+    ).find((row) => row.field === 'date')?.verdict;
+
+  it('treats a twenty-day-old tax invoice as close, matching the 45-day invoice window', () => {
+    expect(dateVerdict('TAX_INVOICE', 'EMAIL')).toBe('CLOSE');
+  });
+
+  it('still calls a twenty-day-old till receipt different, matching the 7-day window', () => {
+    expect(dateVerdict('RECEIPT', 'WHATSAPP')).toBe('DIFFERS');
+  });
+
+  it('compares currency case-insensitively, as the matcher does', () => {
+    // The matcher normalises both sides before comparing; comparing raw strings made the
+    // reviewer's view veto a pairing the engine would happily auto-attach.
+    const row = buildComparison(
+      doc({ currency: 'sar', totalAmount: 12_500 }),
+      charge({ currency: 'SAR', amount: 12_500 }),
+    ).find((r) => r.field === 'amount');
+
+    expect(row?.verdict).toBe('AGREES');
   });
 });

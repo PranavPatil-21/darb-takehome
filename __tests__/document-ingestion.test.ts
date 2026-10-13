@@ -43,7 +43,7 @@ describe('happy path', () => {
     expect(result.disposition).toBe('INGESTED');
     expect(result.status).toBe('MATCHED');
     expect(result.match?.outcome).toBe('AUTO_MATCHED');
-    expect(result.match?.candidates[0].transactionId).toBe(1);
+    expect(result.match?.candidates[0]!.transactionId).toBe(1);
   });
 
   it('persists the extraction onto the document row', async () => {
@@ -233,7 +233,7 @@ describe('scoping', () => {
 
     expect(result.status).toBe('MATCHED');
     // Transaction 11 has no driverPhone — reachable only through the client-wide scope.
-    expect(result.match?.candidates[0].transactionId).toBe(11);
+    expect(result.match?.candidates[0]!.transactionId).toBe(11);
   });
 
   it("refuses a receipt whose fields match another client's transaction exactly", async () => {

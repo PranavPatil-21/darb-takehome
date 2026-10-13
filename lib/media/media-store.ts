@@ -1,6 +1,4 @@
 import { FIXTURES_BY_SLUG, readFixtureFile } from '@/fixtures';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 
 /**
  * WhatsApp webhooks carry a media *id*, not bytes. In production you exchange that id
@@ -62,10 +60,6 @@ export class FixtureMediaStore implements MediaStore {
   }
 }
 
-/** Resolves an email attachment slug for the sample payloads. */
-export function readEmailFixture(slug: string): Buffer {
-  return readFileSync(join(process.cwd(), 'fixtures', 'documents', `${slug}.txt`));
-}
 
 let mediaStore: MediaStore = new FixtureMediaStore();
 

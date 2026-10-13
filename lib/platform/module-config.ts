@@ -8,7 +8,7 @@
  * be making on their behalf.
  *
  * Every default reproduces the behaviour the brief specifies. A host that mounts this and
- * configures nothing gets exactly the system described in requirements.md; the controls
+ * configures nothing gets exactly the system described in docs/requirements.md; the controls
  * below are opt-in, which is the only honest way to add a control to something that
  * already works.
  */
@@ -21,20 +21,43 @@ export type MakerCheckerMode =
    * team can actually staff: it does not slow the queue, and it still produces evidence
    * that somebody independent looked.
    */
-  | 'POST_HOC'
-  /**
-   * Nothing above the materiality threshold stands until a second person signs it off.
-   * Stronger, and expensive — it puts a human round-trip in front of money that is
-   * already spent. Offered because some organisations are required to run it, not
-   * because it is usually the right trade.
-   */
-  | 'BLOCKING';
+  | 'POST_HOC';
+
+/**
+ * A blocking mode — nothing material stands until a second person signs it off — is
+ * **deliberately not offered**, and that is worth recording rather than leaving as an
+ * absence.
+ *
+ * It was declared here as `'BLOCKING'`, documented as a supported value, and accepted
+ * from `DARB_MAKER_CHECKER` — while `decideVerification` branched only on `OFF`. An
+ * organisation required to run blocking four-eyes would have set the variable, seen no
+ * error, and got post-hoc sampling: the one failure mode a compliance control must not
+ * have, because it reports itself as working.
+ *
+ * Building it properly is not a config flag. It needs an attachment to be held in a
+ * pending state that the registers and the VAT position both exclude, a route for the
+ * checker to release it, and a decision about what happens to a filing deadline while a
+ * charge waits. Until that exists, the honest shape is for the value to be unconfigurable
+ * — `fromEnvironment` now rejects anything outside the union and falls back to the
+ * documented default.
+ */
 
 export interface ModuleConfig {
   /**
-   * Where the capability is mounted. The host owns every other path.
+   * Where the capability is mounted. **Read-only — not configurable from the environment.**
    *
-   * `/review` is additionally served at the root regardless, because requirements.md
+   * It used to be settable via `DARB_BASE_PATH`, documented as "where the capability is
+   * mounted", and setting it bricked the product: `modulePath()` rewrote every link while
+   * the App Router kept serving the literal `app/vat/` directory, so with
+   * `DARB_BASE_PATH=/receipts` every nav href and the host page's own entry link returned
+   * 404 while `/vat` still worked. A knob that reports success and makes the product
+   * unreachable is worse than no knob.
+   *
+   * Moving the mount is a directory rename (`app/vat` → `app/<name>`) plus this constant,
+   * or a rewrite rule in the host. Both are deliberate acts, which is the honest shape for
+   * something the filesystem decides.
+   *
+   * `/review` is additionally served at the root regardless, because docs/requirements.md
    * names that path and the contract does not move just because the module gained a home.
    */
   basePath: string;
@@ -117,20 +140,27 @@ export function resetModuleConfig(): void {
  * control mode is the one that changes nothing.
  */
 function fromEnvironment(): ModuleConfig {
-  const modes: readonly MakerCheckerMode[] = ['OFF', 'POST_HOC', 'BLOCKING'];
-  const rawMode = process.env.DARB_MAKER_CHECKER?.trim().toUpperCase() as MakerCheckerMode;
-  const mode = modes.includes(rawMode) ? rawMode : DEFAULT_MODULE_CONFIG.makerChecker.mode;
+  // Narrowed by the guard, not asserted ahead of it. `as MakerCheckerMode` on the line
+  // that *reads* the variable states the assumption before anything has checked it, which
+  // is the pattern `lib/domain/enums.ts` exists to avoid.
+  const rawMode = process.env.DARB_MAKER_CHECKER?.trim().toUpperCase();
+  const mode = isMakerCheckerMode(rawMode) ? rawMode : DEFAULT_MODULE_CONFIG.makerChecker.mode;
 
   const num = (raw: string | undefined, fallback: number) => {
-    const value = Number(raw);
-    return raw !== undefined && Number.isFinite(value) && value >= 0 ? value : fallback;
+    // Shape-checked before conversion. `Number('')` is 0 and `Number('0x10')` is 16, so
+    // an empty or malformed variable read as a *valid* number — and a materiality
+    // threshold of 0 turns a targeted control into a blanket one, which is precisely the
+    // design this module argues against. A decimal string, or the default.
+    if (raw === undefined || !/^\d+(\.\d+)?$/.test(raw.trim())) return fallback;
+    const value = Number(raw.trim());
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
   };
 
-  const basePath = process.env.DARB_BASE_PATH?.trim();
-
+  // `basePath` is deliberately absent here. See its declaration: the App Router serves a
+  // filesystem directory, so rewriting the links without moving the routes only produces
+  // 404s.
   return {
     ...DEFAULT_MODULE_CONFIG,
-    ...(basePath ? { basePath } : {}),
     makerChecker: {
       mode,
       materialityThreshold: num(
@@ -152,6 +182,13 @@ export function moduleConfig(): ModuleConfig {
 }
 
 /** Builds a path inside the module, so no component hardcodes the mount point. */
+const MAKER_CHECKER_MODES = ['OFF', 'POST_HOC'] as const;
+
+/** Type guard, so the narrowing is the check rather than a claim about it. */
+function isMakerCheckerMode(value: string | undefined): value is MakerCheckerMode {
+  return value !== undefined && (MAKER_CHECKER_MODES as readonly string[]).includes(value);
+}
+
 export function modulePath(...segments: string[]): string {
   const base = moduleConfig().basePath.replace(/\/$/, '');
   if (segments.length === 0) return base || '/';

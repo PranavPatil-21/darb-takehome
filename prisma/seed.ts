@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { recomputeDocumentationStatuses } from '../lib/services/charge-status';
 
 /**
  * Seed data.
@@ -26,6 +27,10 @@ async function main() {
   // Order matters: children before parents.
   await prisma.documentMatch.deleteMany();
   await prisma.transaction.updateMany({ data: { confirmedDocumentId: null } });
+  // ReviewEvent has no foreign key to Document by design, so it must be cleared by name
+  // rather than relying on a cascade.
+  await prisma.reviewEvent.deleteMany();
+  await prisma.transactionBatch.deleteMany();
   await prisma.document.deleteMany();
   await prisma.transaction.deleteMany();
   await prisma.senderIdentity.deleteMany();
@@ -315,6 +320,7 @@ async function main() {
   });
 
   await seedOperatingHistory(rawabi.id, nujood.id);
+  await reconcileStatuses(prisma);
 
   const [clients, identities, transactions] = await Promise.all([
     prisma.client.count(),
@@ -364,12 +370,63 @@ async function seedOperatingHistory(rawabiId: number, nujoodId: number): Promise
     seed = (seed * 1664525 + 1013904223) % 4294967296;
     return seed / 4294967296;
   };
-  const pick = <T,>(items: readonly T[]): T => items[Math.floor(next() * items.length)];
+  const pick = <T,>(items: readonly T[]): T => {
+    const chosen = items[Math.floor(next() * items.length)];
+    if (chosen === undefined) throw new Error('pick() called with an empty list');
+    return chosen;
+  };
+
+  // The cards whose scripted scenarios are *sensitive to volume*, named once and checked
+  // below rather than described in prose and hoped for.
+  //
+  // Most scripted cards tolerate background charges happily. These three do not, and each
+  // for a different reason:
+  //
+  //   4412  almost every scripted scenario runs on it, including the orphan receipt whose
+  //         entire purpose is to have no plausible charge. Volume here gave it four
+  //         candidates at 0.67, turning a demonstrated UNMATCHED into a review item — and
+  //         since the re-match sweep only revisits UNMATCHED documents, that also made the
+  //         late-arrival rescue structurally invisible.
+  //   5520  carries the one-rule-each scenarios (17-22), which depend on nothing else
+  //         being scoped to that card. Two to four extra charges a day for 28 days is
+  //         exactly the noise that flips a scripted AUTO_MATCHED into an ambiguity.
+  //   6604  Layla is the NO_CANDIDATE_TRANSACTIONS scenario and must have no charges at
+  //         all. She is also a Rawabi identity, so Nujood volume on her card would
+  //         describe a driver whose charges belong to a different client.
+  //
+  // The assertion is the point. A comment asking the next person not to add a card is a
+  // wish; this fails the seed immediately and says which scenario it would have broken.
+  const SCENARIO_CRITICAL_CARDS = ['4412', '5520', '6604'] as const;
 
   const fleets = [
-    { clientId: rawabiId, cards: ['4412', '8899', '1155', '5520'], drivers: ['966551234567', '966557778888', null, '966554440001'] },
-    { clientId: nujoodId, cards: ['7731', '6604'], drivers: ['966561112233', '966554440002'] },
+    // Deliberately excludes the cards the scripted scenarios depend on.
+    //
+    // Card 5520 / driver 966554440001 carries transactions 17-22, and the comment at the
+    // top of this file promises nothing else is scoped to that card so those scenarios
+    // cannot be perturbed. Including it in the background generator made that promise
+    // false: 2-4 extra charges a day for 28 days on the same card is exactly the kind of
+    // noise that flips a scripted AUTO_MATCHED into an ambiguity.
+    // 4412 is excluded for the same reason as 5520: it is the card almost every scripted
+    // scenario runs on, including the orphan receipt whose whole purpose is to have no
+    // plausible charge. Background volume generated onto it gave that receipt four
+    // candidates at 0.67 and turned a demonstrated UNMATCHED into a review item — which
+    // also made it invisible to the re-match sweep, since the sweep only revisits
+    // UNMATCHED documents. Volume belongs on the cards nothing is scripted against.
+    { clientId: rawabiId, cards: ['8899', '1155'], drivers: ['966557778888', null] },
+    { clientId: nujoodId, cards: ['7731'], drivers: ['966561112233'] },
   ];
+
+  const collisions = fleets
+    .flatMap((fleet) => fleet.cards)
+    .filter((card) => (SCENARIO_CRITICAL_CARDS as readonly string[]).includes(card));
+
+  if (collisions.length > 0) {
+    throw new Error(
+      `Background volume would be generated onto scenario-critical card(s) ${collisions.join(', ')}. ` +
+        'Those cards carry scripted demo scenarios that extra charges silently break — ' +
+        'see SCENARIO_CRITICAL_CARDS above. Put background volume on a different card.',
+    );
+  }
 
   const rows: {
     id: number; clientId: number; cardLast4: string; driverPhone: string | null;
@@ -388,6 +445,9 @@ async function seedOperatingHistory(rawabiId: number, nujoodId: number): Promise
 
       for (let n = 0; n < perDay; n += 1) {
         const cardIndex = Math.floor(next() * fleet.cards.length);
+        const card = fleet.cards[cardIndex];
+        const driver = fleet.drivers[cardIndex] ?? null;
+        if (card === undefined) continue;
         // Amounts are log-distributed: mostly small, occasionally large. A uniform spread
         // would make the by-value status bar meaningless, since its whole point is that
         // one large charge outweighs many small ones.
@@ -402,8 +462,8 @@ async function seedOperatingHistory(rawabiId: number, nujoodId: number): Promise
         rows.push({
           id: id++,
           clientId: fleet.clientId,
-          cardLast4: fleet.cards[cardIndex],
-          driverPhone: fleet.drivers[cardIndex],
+          cardLast4: card,
+          driverPhone: driver,
           merchantName: pick(MERCHANTS),
           amount,
           transactionAt: at(
@@ -489,6 +549,23 @@ async function seedOperatingHistory(rawabiId: number, nujoodId: number): Promise
   console.log(
     `Seeded ${rows.length} background charges, ${documented.length} already documented.`,
   );
+}
+
+/**
+ * Bring every seeded charge's cached status in line with its relations.
+ *
+ * The seed writes `confirmedDocumentId` and match rows directly rather than going through
+ * the write paths that maintain the cache — which is what a bulk import does, and exactly
+ * the case `scripts/backfill-status.ts` exists for. Running the same reconciliation here
+ * means a freshly seeded database is in the state the application would have produced.
+ */
+async function reconcileStatuses(prisma: PrismaClient) {
+  const charges = await prisma.transaction.findMany({ select: { id: true } });
+  await recomputeDocumentationStatuses(
+    prisma,
+    charges.map((charge) => charge.id),
+  );
+  console.log(`Reconciled documentation status for ${charges.length} charges.`);
 }
 
 main()

@@ -25,6 +25,8 @@ export interface AssuranceRow {
   documentMerchant: string | null;
   documentAmount: number | null;
   documentCurrency: string | null;
+  /** When the receipt says it was issued. The checker's third comparison field. */
+  documentDate: Date | null;
 
   chargeMerchant: string;
   chargeAmount: number;
@@ -66,7 +68,7 @@ export async function getAssuranceQueue(
       decidedAt: true,
       status: true,
       document: {
-        select: { merchantName: true, totalAmount: true, currency: true },
+        select: { merchantName: true, totalAmount: true, currency: true, documentDate: true },
       },
       transaction: {
         select: {
@@ -90,6 +92,7 @@ export async function getAssuranceQueue(
 
       documentMerchant: match.document.merchantName,
       documentAmount: match.document.totalAmount,
+      documentDate: match.document.documentDate,
       documentCurrency: match.document.currency,
 
       chargeMerchant: match.transaction.merchantName,

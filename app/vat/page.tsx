@@ -49,23 +49,41 @@ function EnginePerformance({
   if (data.documentsProcessed === 0) return null;
 
   return (
-    <section className="mt-10 border-t pt-5">
-      <h2 className="text-sm font-medium">Automation</h2>
-      <p className="mt-1.5 text-sm text-muted-foreground tabular-nums">
-        {data.autoAttached} of {data.documentsProcessed} documents attached without a person —{' '}
-        {formatPercent(data.autoAttachRate)}.
-        {data.oldestWaitingDays !== null ? (
-          <>
-            {' '}
-            The longest-waiting document has been in the queue{' '}
-            {data.oldestWaitingDays === 0
-              ? 'less than a day'
-              : `${data.oldestWaitingDays} ${data.oldestWaitingDays === 1 ? 'day' : 'days'}`}
-            .
-          </>
-        ) : null}
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground">
+    <section className="mt-10">
+      <h2 className="text-base font-semibold tracking-[-0.006em]">Automation</h2>
+
+      {/* Two figures side by side rather than buried in a sentence. These are the numbers
+          somebody checks weekly, and a reader should not have to parse prose to find
+          them. */}
+      <div className="mt-4 grid gap-px overflow-hidden rounded-xl border bg-border shadow-xs sm:grid-cols-2">
+        <div className="bg-card px-5 py-4">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Attached without a person
+          </p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums tracking-[-0.011em]">
+            {formatPercent(data.autoAttachRate)}
+          </p>
+          <p className="mt-1 text-xs tabular-nums text-muted-foreground">
+            {data.autoAttached} of {data.documentsProcessed} documents
+          </p>
+        </div>
+
+        <div className="bg-card px-5 py-4">
+          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            Longest wait in the queue
+          </p>
+          <p className="mt-2 text-2xl font-semibold tabular-nums tracking-[-0.011em]">
+            {data.oldestWaitingDays === null
+              ? '—'
+              : data.oldestWaitingDays === 0
+                ? '< 1 day'
+                : `${data.oldestWaitingDays} ${data.oldestWaitingDays === 1 ? 'day' : 'days'}`}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Oldest document still waiting</p>
+        </div>
+      </div>
+
+      <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
         A sustained fall in this rate usually means an acquirer changed how it writes
         merchant names — the queue fills before coverage moves.
       </p>

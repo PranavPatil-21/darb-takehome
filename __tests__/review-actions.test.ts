@@ -1,11 +1,8 @@
 import { readFixtureFile } from '@/fixtures';
 import { MockExtractor, setExtractor } from '@/lib/extraction';
 import { ingestDocument } from '@/lib/services/document-ingestion';
-import {
-  TransactionAlreadyDocumentedError,
-  claimConfirmedDocumentSlot,
-  releaseConfirmedDocumentSlot,
-} from '@/lib/services/slot-claim';
+import { confirmMatch, rejectMatch } from '@/lib/actions/review';
+import { runAction } from './helpers/actions';
 import { resetDatabase, seedMinimalWorld, testPrisma } from './helpers/db';
 
 /**
@@ -17,60 +14,17 @@ import { resetDatabase, seedMinimalWorld, testPrisma } from './helpers/db';
  * concurrency guarantee under test is the production one, not a re-implementation of it.
  */
 
-const REVIEWER = 'reviewer';
-
-async function confirm(matchId: number) {
-  return testPrisma.$transaction(async (tx) => {
-    const match = await tx.documentMatch.findUniqueOrThrow({ where: { id: matchId } });
-    if (['CONFIRMED', 'AUTO_CONFIRMED', 'REJECTED'].includes(match.status)) {
-      return { effect: 'ALREADY_DECIDED' as const };
-    }
-    const claimed = await claimConfirmedDocumentSlot(
-      tx.transaction,
-      match.transactionId,
-      match.documentId,
-    );
-    if (!claimed) throw new TransactionAlreadyDocumentedError(match.transactionId);
-
-    await tx.documentMatch.update({
-      where: { id: matchId },
-      data: { status: 'CONFIRMED', decidedBy: REVIEWER, decidedAt: new Date() },
-    });
-    await tx.documentMatch.updateMany({
-      where: { documentId: match.documentId, id: { not: matchId }, status: 'CANDIDATE' },
-      data: { status: 'REJECTED', decidedBy: REVIEWER, decidedAt: new Date() },
-    });
-    await tx.document.update({ where: { id: match.documentId }, data: { status: 'MATCHED' } });
-    return { effect: 'CONFIRMED' as const };
-  });
-}
-
-async function reject(matchId: number) {
-  return testPrisma.$transaction(async (tx) => {
-    const match = await tx.documentMatch.findUniqueOrThrow({ where: { id: matchId } });
-    if (match.status === 'REJECTED') return { effect: 'ALREADY_DECIDED' as const, remaining: 0 };
-
-    if (['CONFIRMED', 'AUTO_CONFIRMED'].includes(match.status)) {
-      await releaseConfirmedDocumentSlot(tx.transaction, match.transactionId, match.documentId);
-    }
-
-    await tx.documentMatch.update({
-      where: { id: matchId },
-      data: { status: 'REJECTED', decidedBy: REVIEWER, decidedAt: new Date() },
-    });
-    const remaining = await tx.documentMatch.count({
-      where: { documentId: match.documentId, status: 'CANDIDATE' },
-    });
-    await tx.document.update({
-      where: { id: match.documentId },
-      data: {
-        status: remaining > 0 ? 'NEEDS_REVIEW' : 'UNMATCHED',
-        failureReason: remaining > 0 ? null : 'ALL_CANDIDATES_REJECTED',
-      },
-    });
-    return { effect: 'REJECTED' as const, remaining };
-  });
-}
+/**
+ * Both helpers call the real server actions.
+ *
+ * They used to be re-implementations of the action bodies, which passed happily while the
+ * production code diverged — and it did: the terminal-status list mirrored here still said
+ * a REJECTED match could never be confirmed, months after `confirmMatch` was changed to
+ * allow exactly that. A test that mirrors the code under test asserts only that the mirror
+ * is self-consistent.
+ */
+const confirm = (matchId: number) => runAction(confirmMatch, matchId);
+const reject = (matchId: number) => runAction(rejectMatch, matchId);
 
 /** Ingests the ambiguous Tamimi receipt and returns its two candidate match rows. */
 async function ingestAmbiguous() {
@@ -111,17 +65,17 @@ describe('confirmMatch', () => {
   it('attaches the chosen candidate and rejects its siblings', async () => {
     const { documentId, matches } = await ingestAmbiguous();
 
-    await confirm(matches[0].id);
+    await confirm(matches[0]!.id);
 
     const after = await testPrisma.documentMatch.findMany({ where: { documentId } });
-    expect(after.find((m) => m.id === matches[0].id)?.status).toBe('CONFIRMED');
-    expect(after.find((m) => m.id === matches[1].id)?.status).toBe('REJECTED');
+    expect(after.find((m) => m.id === matches[0]!.id)?.status).toBe('CONFIRMED');
+    expect(after.find((m) => m.id === matches[1]!.id)?.status).toBe('REJECTED');
   });
 
   it('moves the document to MATCHED', async () => {
     const { documentId, matches } = await ingestAmbiguous();
 
-    await confirm(matches[0].id);
+    await confirm(matches[0]!.id);
 
     const document = await testPrisma.document.findUniqueOrThrow({ where: { id: documentId } });
     expect(document.status).toBe('MATCHED');
@@ -130,8 +84,8 @@ describe('confirmMatch', () => {
   it('is a no-op on a double submit rather than a second confirmation', async () => {
     const { matches } = await ingestAmbiguous();
 
-    const first = await confirm(matches[0].id);
-    const second = await confirm(matches[0].id);
+    const first = await confirm(matches[0]!.id);
+    const second = await confirm(matches[0]!.id);
 
     expect(first.effect).toBe('CONFIRMED');
     expect(second.effect).toBe('ALREADY_DECIDED');
@@ -140,9 +94,9 @@ describe('confirmMatch', () => {
   it('refuses a second document for a transaction that already has one', async () => {
     // The database constraint is the guard, not an application-level if.
     const { matches } = await ingestAmbiguous();
-    await confirm(matches[0].id);
+    await confirm(matches[0]!.id);
 
-    const transactionId = matches[0].transactionId;
+    const transactionId = matches[0]!.transactionId;
     const otherDocument = await testPrisma.document.create({
       data: {
         source: 'WHATSAPP',
@@ -159,24 +113,27 @@ describe('confirmMatch', () => {
     });
 
     // A plain `update` here would silently overwrite the first document's confirmation.
-    // The compare-and-set refuses instead.
-    await expect(confirm(rivalMatch.id)).rejects.toBeInstanceOf(TransactionAlreadyDocumentedError);
+    // The compare-and-set refuses instead, and the action reports that refusal rather
+    // than throwing — a working control is not an error.
+    const blocked = await confirm(rivalMatch.id);
+    expect(blocked.ok).toBe(false);
+    expect(blocked.effect).toBe('BLOCKED');
 
     const transaction = await testPrisma.transaction.findUniqueOrThrow({
       where: { id: transactionId },
     });
-    expect(transaction.confirmedDocumentId).toBe(matches[0].documentId);
+    expect(transaction.confirmedDocumentId).toBe(matches[0]!.documentId);
     expect(transaction.confirmedDocumentId).not.toBe(otherDocument.id);
   });
 
   it('refuses to attach a document that is already confirmed for another transaction', async () => {
     const { documentId, matches } = await ingestAmbiguous();
-    await confirm(matches[0].id);
+    await confirm(matches[0]!.id);
 
     // The @unique index on confirmedDocumentId is what catches this direction.
     await expect(
       testPrisma.transaction.update({
-        where: { id: matches[1].transactionId },
+        where: { id: matches[1]!.transactionId },
         data: { confirmedDocumentId: documentId },
       }),
     ).rejects.toThrow(/Unique constraint|P2002/i);
@@ -185,7 +142,7 @@ describe('confirmMatch', () => {
   it('survives two reviewers confirming different candidates at the same time', async () => {
     const { documentId, matches } = await ingestAmbiguous();
 
-    const outcomes = await Promise.allSettled([confirm(matches[0].id), confirm(matches[1].id)]);
+    const outcomes = await Promise.allSettled([confirm(matches[0]!.id), confirm(matches[1]!.id)]);
     const fulfilled = outcomes.filter((o) => o.status === 'fulfilled');
 
     // Whatever the interleaving, the document ends with exactly one confirmed match.
@@ -201,7 +158,7 @@ describe('rejectMatch', () => {
   it('leaves the document in review while other candidates remain', async () => {
     const { documentId, matches } = await ingestAmbiguous();
 
-    const result = await reject(matches[0].id);
+    const result = await reject(matches[0]!.id);
 
     expect(result.effect).toBe('REJECTED');
     const document = await testPrisma.document.findUniqueOrThrow({ where: { id: documentId } });
@@ -211,47 +168,70 @@ describe('rejectMatch', () => {
   it('returns the document to UNMATCHED once every candidate is rejected', async () => {
     const { documentId, matches } = await ingestAmbiguous();
 
-    await reject(matches[0].id);
-    await reject(matches[1].id);
+    await reject(matches[0]!.id);
+    await reject(matches[1]!.id);
 
     const document = await testPrisma.document.findUniqueOrThrow({ where: { id: documentId } });
     expect(document.status).toBe('UNMATCHED');
     expect(document.failureReason).toBe('ALL_CANDIDATES_REJECTED');
   });
 
+  it('keeps the document MATCHED when a confirmed match survives the rejection', async () => {
+    // A document can hold a confirmed match on one charge *and* a live candidate on
+    // another: an AUTO_MATCHED ingestion persists the whole ranked list, winner
+    // AUTO_CONFIRMED and runners-up CANDIDATE. Rejecting the runner-up must not report
+    // the receipt as unmatched while a charge still carries it as evidence.
+    const { documentId, matches } = await ingestAmbiguous();
+    const [winner, runnerUp] = matches;
+
+    await confirm(winner!.id);
+    // Re-open the runner-up so the document holds CONFIRMED + CANDIDATE at once.
+    await testPrisma.documentMatch.update({
+      where: { id: runnerUp!.id },
+      data: { status: 'CANDIDATE', decidedBy: null, decidedAt: null },
+    });
+
+    await reject(runnerUp!.id);
+
+    const document = await testPrisma.document.findUniqueOrThrow({ where: { id: documentId } });
+    expect(document.status).toBe('MATCHED');
+    expect(document.failureReason).toBeNull();
+  });
+
   it('is a no-op on a double submit', async () => {
     const { matches } = await ingestAmbiguous();
 
-    await reject(matches[0].id);
-    const second = await reject(matches[0].id);
+    await reject(matches[0]!.id);
+    const second = await reject(matches[0]!.id);
 
     expect(second.effect).toBe('ALREADY_DECIDED');
   });
 
   it('detaches a confirmed match and frees the transaction for the correct document', async () => {
     const { matches } = await ingestAmbiguous();
-    await confirm(matches[0].id);
+    await confirm(matches[0]!.id);
 
     // Rejecting a *confirmed* match is the undo path — it must release the slot.
-    const result = await reject(matches[0].id);
+    const result = await reject(matches[0]!.id);
     expect(result.effect).toBe('REJECTED');
 
     const transaction = await testPrisma.transaction.findUniqueOrThrow({
-      where: { id: matches[0].transactionId },
+      where: { id: matches[0]!.transactionId },
     });
     expect(transaction.confirmedDocumentId).toBeNull();
   });
 
   it('lets a rejected-then-reconsidered candidate be confirmed after the slot is freed', async () => {
     const { matches } = await ingestAmbiguous();
-    await confirm(matches[0].id);
-    await reject(matches[0].id);
+    await confirm(matches[0]!.id);
+    await reject(matches[0]!.id);
 
     await testPrisma.documentMatch.update({
-      where: { id: matches[1].id },
+      where: { id: matches[1]!.id },
       data: { status: 'CANDIDATE' },
     });
 
-    await expect(confirm(matches[1].id)).resolves.toEqual({ effect: 'CONFIRMED' });
+    const reconsidered = await confirm(matches[1]!.id);
+    expect(reconsidered.effect).toBe('CONFIRMED');
   });
 });

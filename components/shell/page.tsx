@@ -14,10 +14,26 @@ import { cn } from '@/lib/utils';
  * and still lands in the same place as every other screen.
  */
 
-export function Page({ children }: { children: React.ReactNode }) {
+export function Page({
+  children,
+  /** Registers and tables earn the extra width; reading screens do not. */
+  width = 'default',
+}: {
+  children: React.ReactNode;
+  width?: 'default' | 'wide';
+}) {
   // One width, one rhythm, everywhere. 72rem is wide enough for a register with six
   // columns and narrow enough that a line of prose stays readable.
-  return <main className="mx-auto w-full max-w-6xl px-6 py-8">{children}</main>;
+  return (
+    <main
+      className={cn(
+        'mx-auto w-full px-4 py-8 sm:px-6 lg:px-8',
+        width === 'wide' ? 'max-w-[90rem]' : 'max-w-6xl',
+      )}
+    >
+      {children}
+    </main>
+  );
 }
 
 export function PageHeader({
@@ -37,7 +53,7 @@ export function PageHeader({
   meta?: React.ReactNode;
 }) {
   return (
-    <header className="mb-6">
+    <header className="mb-6 sm:mb-8">
       {back ? (
         <Link
           href={back.href}
@@ -49,11 +65,15 @@ export function PageHeader({
 
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="min-w-0">
-          <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
+          {/* Large enough to actually lead the page. The old 20px sat barely above body
+              text, so no screen had a visible top of its hierarchy. */}
+          <h1 className="text-2xl font-semibold tracking-[-0.011em]">{title}</h1>
           {description ? (
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{description}</p>
+            <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted-foreground">
+              {description}
+            </p>
           ) : null}
-          {meta ? <div className="mt-2">{meta}</div> : null}
+          {meta ? <div className="mt-3">{meta}</div> : null}
         </div>
 
         {action ? <div className="shrink-0">{action}</div> : null}
@@ -82,16 +102,18 @@ export function Section({
   className?: string;
 }) {
   return (
-    <section className={cn('mt-8 first:mt-0', className)}>
+    // Sections are separated by a real gap, not a hairline. Two blocks 32px apart with
+    // headings of their own read as two things; the same blocks 12px apart read as one.
+    <section className={cn('mt-10 first:mt-0', className)}>
       {title ? (
-        <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <div>
-            <h2 className="text-sm font-medium">{title}</h2>
+            <h2 className="text-base font-semibold tracking-[-0.006em]">{title}</h2>
             {description ? (
-              <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+              <p className="mt-1 text-sm text-muted-foreground">{description}</p>
             ) : null}
           </div>
-          {action ? <div className="shrink-0 text-xs">{action}</div> : null}
+          {action ? <div className="shrink-0 text-sm">{action}</div> : null}
         </div>
       ) : null}
       {children}
@@ -117,10 +139,12 @@ export function EmptyState({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-lg border bg-card px-6 py-12 text-center">
-      <p className="font-medium">{title}</p>
-      <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">{description}</p>
-      {action ? <div className="mt-4 flex justify-center">{action}</div> : null}
+    <div className="rounded-xl border bg-card px-6 py-16 text-center shadow-xs">
+      <p className="text-base font-medium">{title}</p>
+      <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-muted-foreground">
+        {description}
+      </p>
+      {action ? <div className="mt-5 flex justify-center">{action}</div> : null}
     </div>
   );
 }
@@ -137,11 +161,13 @@ export function FactGrid({
   facts: { label: string; value: React.ReactNode }[];
 }) {
   return (
-    <dl className="grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-4">
+    <dl className="grid gap-px overflow-hidden rounded-xl border bg-border shadow-xs sm:grid-cols-2 lg:grid-cols-4">
       {facts.map((fact) => (
-        <div key={fact.label}>
-          <dt className="text-xs text-muted-foreground">{fact.label}</dt>
-          <dd className="mt-0.5 text-sm tabular-nums">{fact.value}</dd>
+        <div key={fact.label} className="bg-card px-4 py-3">
+          <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {fact.label}
+          </dt>
+          <dd className="mt-1 text-sm tabular-nums">{fact.value}</dd>
         </div>
       ))}
     </dl>

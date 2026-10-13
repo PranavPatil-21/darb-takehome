@@ -5,7 +5,13 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+/* No `@custom-variant dark` override, deliberately.
+   There was one, matching only a `.dark` ancestor — and nothing in the application ever
+   sets that class. Every `dark:` utility across every component was therefore
+   unreachable, and a reader whose system is in dark mode was served the light theme.
+   Without the override, Tailwind's built-in `dark:` variant is `prefers-color-scheme`,
+   which is what this product actually wants: it has no theme switcher to honour. The
+   token block below moves to the same media query so the two agree. */
 
 @theme inline {
   --color-background: var(--background);
@@ -16,6 +22,12 @@
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
   --font-heading: var(--font-geist-sans);
+  --color-attention: var(--attention);
+  --color-attention-border: var(--attention-border);
+  --color-attention-foreground: var(--attention-foreground);
+  --color-positive: var(--positive);
+  --color-positive-foreground: var(--positive-foreground);
+  --color-surface-sunken: var(--surface-sunken);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -54,9 +66,17 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/*
+ * The page is tinted and the cards are white, not the other way round.
+ *
+ * Every surface was `oklch(1 0 0)` — card, popover and page were the same white, so a
+ * card's only separation from the page was a 1px border and the interface read as one
+ * undifferentiated sheet. Giving the page a faint warm grey costs nothing and makes every
+ * card on it legible as a raised surface without a single shadow.
+ */
 :root {
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --background: oklch(0.984 0.002 100);
+  --foreground: oklch(0.17 0.004 100);
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
@@ -65,20 +85,33 @@
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
+  --muted: oklch(0.968 0.002 100);
+  /* Darkened from 0.556: the old value sat at ~4.0:1 on white and failed AA for the
+     small text it is mostly used on. This clears 4.5:1. */
+  --muted-foreground: oklch(0.505 0.005 100);
+  --accent: oklch(0.968 0.002 100);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --border: oklch(0.912 0.003 100);
+  --input: oklch(0.912 0.003 100);
+  --ring: oklch(0.17 0.004 100);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
   --radius: 0.625rem;
+
+  /* ---- semantic status colours -------------------------------------------
+     Named by what they mean, not by hue, so a screen cannot pick "amber"
+     for one kind of attention and "yellow" for another. */
+  --attention: oklch(0.97 0.035 85);
+  --attention-border: oklch(0.86 0.07 80);
+  --attention-foreground: oklch(0.42 0.08 65);
+  --positive: oklch(0.96 0.03 155);
+  --positive-foreground: oklch(0.42 0.09 150);
+  --surface-sunken: oklch(0.975 0.002 100);
+
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -89,10 +122,12 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-.dark {
-  --background: oklch(0.145 0 0);
+@media (prefers-color-scheme: dark) {
+  :root {
+  /* Same relationship inverted: the page is the darkest surface and cards sit above it. */
+  --background: oklch(0.145 0.003 100);
   --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
+  --card: oklch(0.198 0.003 100);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
@@ -113,6 +148,13 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
+  --attention: oklch(0.28 0.045 80);
+  --attention-border: oklch(0.42 0.07 80);
+  --attention-foreground: oklch(0.88 0.07 85);
+  --positive: oklch(0.26 0.04 155);
+  --positive-foreground: oklch(0.82 0.1 155);
+  --surface-sunken: oklch(0.17 0.003 100);
+
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
   --sidebar-primary: oklch(0.488 0.243 264.376);
@@ -121,6 +163,7 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  }
 }
 
 @layer base {
@@ -129,6 +172,8 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Numerals in tables, money columns and badges must not jitter between rows. */
+    font-variant-numeric: tabular-nums;
   }
   html {
     @apply font-sans;

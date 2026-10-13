@@ -2,7 +2,7 @@ import {
   canVerify,
   decideVerification,
 } from '@/lib/platform/verification';
-import { configureModule, resetModuleConfig } from '@/lib/platform/module-config';
+import { configureModule, modulePath, resetModuleConfig } from '@/lib/platform/module-config';
 
 /**
  * The maker-checker control.
@@ -26,7 +26,7 @@ const input = (overrides: Partial<Parameters<typeof decideVerification>[0]> = {}
 describe('when the host has not asked for it', () => {
   it('requires nothing at all', () => {
     // The default. A deployment that configures nothing gets exactly the behaviour
-    // requirements.md describes.
+    // docs/requirements.md describes.
     const decision = decideVerification(input({ amount: 10_000_000, automatic: true, draw: 0 }));
 
     expect(decision.required).toBe(false);
@@ -137,5 +137,85 @@ describe('segregation of duties', () => {
   it('does not treat the system actor as a person', () => {
     expect(canVerify({ verifierId: 'system', makerId: 'system' }).allowed).toBe(false);
     expect(canVerify({ verifierId: 'controller', makerId: 'system' }).allowed).toBe(true);
+  });
+});
+
+describe('navigation follows the host configuration', () => {
+  it('rebuilds links after the module is remounted at a different base path', async () => {
+    const { configureModule, resetModuleConfig } = await import('@/lib/platform/module-config');
+    const { visibleNavItems } = await import('@/lib/platform/navigation');
+    const actor = {
+      id: 'ops',
+      displayName: 'Ops',
+      capabilities: ['view', 'decide', 'verify', 'configure'] as const,
+      clientIds: null,
+    };
+
+    try {
+      configureModule({ basePath: '/compliance' });
+      const hrefs = visibleNavItems({ ...actor, capabilities: [...actor.capabilities] }).map((i) => i.href);
+
+      // The accessor claimed to rebuild per call so a host could mount this anywhere.
+      // It copied an href computed once at import instead, so every link pointed at the
+      // default mount no matter what the host asked for.
+      expect(hrefs.every((href) => href.startsWith('/compliance'))).toBe(true);
+    } finally {
+      resetModuleConfig();
+    }
+  });
+});
+
+describe('module configuration refuses values it cannot honour', () => {
+  it('falls back to the default rather than silently accepting an unsupported mode', async () => {
+    // A blocking mode was declared, documented and accepted from the environment while
+    // nothing implemented it. A compliance control that reports itself as configured and
+    // then does something weaker is the one failure mode it must not have.
+    const { resetModuleConfig, moduleConfig } = await import('@/lib/platform/module-config');
+    const previous = process.env.DARB_MAKER_CHECKER;
+    try {
+      process.env.DARB_MAKER_CHECKER = 'BLOCKING';
+      resetModuleConfig();
+      // The documented default, whatever it is — the property under test is that an
+      // unsupported value does not survive into the configuration.
+      const { mode } = moduleConfig().makerChecker;
+      expect(['OFF', 'POST_HOC']).toContain(mode);
+    } finally {
+      process.env.DARB_MAKER_CHECKER = previous;
+      resetModuleConfig();
+    }
+  });
+
+  it('does not read an empty threshold as zero', async () => {
+    // `Number('')` is 0, which would make every attachment material.
+    const { resetModuleConfig, moduleConfig } = await import('@/lib/platform/module-config');
+    const previous = process.env.DARB_MATERIALITY_THRESHOLD;
+    try {
+      process.env.DARB_MATERIALITY_THRESHOLD = '';
+      resetModuleConfig();
+      expect(moduleConfig().makerChecker.materialityThreshold).toBeGreaterThan(0);
+    } finally {
+      process.env.DARB_MATERIALITY_THRESHOLD = previous;
+      resetModuleConfig();
+    }
+  });
+});
+
+describe('the module mount is not a configurable lie', () => {
+  it('ignores DARB_BASE_PATH, because the router serves a directory', () => {
+    // Setting it rewrote every link while the App Router kept serving `app/vat/`, so the
+    // whole product 404'd while reporting success. Verified live before the change:
+    // `/receipts` and `/receipts/review` → 404, `/vat` → 200, and every nav href on the
+    // page pointed at the 404s.
+    const previous = process.env.DARB_BASE_PATH;
+    try {
+      process.env.DARB_BASE_PATH = '/receipts';
+      resetModuleConfig();
+
+      expect(modulePath()).toBe('/vat');
+      expect(modulePath('review')).toBe('/vat/review');
+    } finally {
+      process.env.DARB_BASE_PATH = previous;
+      resetModuleConfig();
+    }
   });
 });

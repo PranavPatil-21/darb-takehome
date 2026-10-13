@@ -1,5 +1,6 @@
 import { AGE_BUCKET_LABEL, TRANSACTION_STATUS } from '@/lib/platform/transaction-status';
-import { EXCEPTION_KIND_LABEL } from '@/lib/platform/document-register';
+import { MATCH_REASONS, type MatchReason } from '@/lib/services/transaction-matcher';
+import { nextStepText, reasonText, workKindLabel, workKindNextStep } from '@/lib/content/messages';
 import { ROLE_SUMMARY } from '@/lib/platform/identity';
 import { TRIGGER_COPY } from '@/lib/platform/verification';
 import { SOURCE_LABEL, presentStatus } from '@/lib/ui/vocabulary';
@@ -162,13 +163,73 @@ describe('host overrides reach the copy tables', () => {
     expect(TRIGGER_COPY.MATERIAL).toBe('High value');
   });
 
-  it('reaches the exception labels', () => {
-    configureMessages({ 'exception.UNREADABLE': 'Could not be read' });
-    expect(EXCEPTION_KIND_LABEL.UNREADABLE).toBe('Could not be read');
+  it('reaches the work-queue group labels', () => {
+    configureMessages({ 'work.UNREADABLE': 'Could not be read' });
+    expect(workKindLabel('UNREADABLE')).toBe('Could not be read');
+  });
+
+  it('reaches the next step a group tells the reader to take', () => {
+    configureMessages({ 'work.SENDER_UNKNOWN.next': 'Register them in admin' });
+    expect(workKindNextStep('SENDER_UNKNOWN')).toBe('Register them in admin');
   });
 
   it('reaches the role summaries', () => {
     configureMessages({ 'role.reviewer': 'Attaches receipts' });
     expect(ROLE_SUMMARY.reviewer).toBe('Attaches receipts');
+  });
+});
+
+describe('every matcher reason the reviewer can see has copy', () => {
+  /**
+   * The copy layer is keyed by reason code, and nothing connects the two lists. Adding a
+   * reason to the matcher without adding its sentence here renders a raw enum — or a
+   * fallback — as the headline explaining why a document landed on somebody's desk.
+   *
+   * That is exactly what happened when `UNEXPLAINED_AMOUNT_GAP` was added: it became the
+   * most common review reason in the demo and had no sentence at all.
+   *
+   * Review-queue reasons only. `CONFIDENT_SINGLE_CANDIDATE` never reaches a reviewer (the
+   * document was attached automatically), and the three UNMATCHED reasons are shown on the
+   * document register rather than as a next step.
+   */
+  const REVIEW_REASONS: readonly MatchReason[] = [
+    'AMBIGUOUS_TOP_CANDIDATES',
+    'TRANSACTION_ALREADY_DOCUMENTED',
+    'LOW_EXTRACTION_CONFIDENCE',
+    'WEAK_EVIDENCE',
+    'MID_CONFIDENCE',
+    'UNEXPLAINED_AMOUNT_GAP',
+  ];
+
+  // Through the production accessors, not `t()`. `lookup` casts the composed key and
+  // falls back to the raw code, so an unmapped reason renders as the bare enum rather
+  // than failing to compile — which is precisely why this needs a test and not a type.
+  it.each(REVIEW_REASONS)('%s has a reason sentence', (reason) => {
+    const copy = reasonText(reason);
+    expect(copy).not.toBe(reason);
+    expect(copy.length).toBeGreaterThan(10);
+  });
+
+  it.each(REVIEW_REASONS)('%s tells the reviewer what to do next', (reason) => {
+    const copy = nextStepText(reason);
+    expect(copy).not.toBe(reason);
+    expect(copy.length).toBeGreaterThan(10);
+  });
+
+  it('covers every reason the matcher can return for a review outcome', () => {
+    // Guards the list above against the matcher growing a new review reason.
+    const unaccounted = MATCH_REASONS.filter(
+      (reason) =>
+        !REVIEW_REASONS.includes(reason) &&
+        ![
+          'CONFIDENT_SINGLE_CANDIDATE',
+          'NO_PLAUSIBLE_CANDIDATE',
+          'NO_CANDIDATE_TRANSACTIONS',
+          'UNUSABLE_EXTRACTION',
+          'INSUFFICIENT_CORROBORATION',
+        ].includes(reason),
+    );
+
+    expect(unaccounted).toEqual([]);
   });
 });

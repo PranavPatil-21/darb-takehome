@@ -1,12 +1,23 @@
 import { NextResponse } from 'next/server';
 import { extractWhatsAppMessages, whatsappWebhookSchema } from '@/lib/webhooks/schemas';
 import { allowUnsignedWebhooks, verifySignature } from '@/lib/webhooks/signature';
-import { accepted, acceptedDespiteFailure, badRequest, unauthorized } from '@/lib/webhooks/respond';
-import { getMediaStore } from '@/lib/media/media-store';
+import { accepted, badRequest, unauthorized, retryLater } from '@/lib/webhooks/respond';
+import { getMediaStore, MediaUnavailableError } from '@/lib/media/media-store';
 import { ingestDocument } from '@/lib/services/document-ingestion';
 import { log } from '@/lib/logger';
 
 export const runtime = 'nodejs';
+
+/** One row per inbound message: what we did with it, and why. */
+interface MessageOutcome {
+  wamid: string;
+  documentId?: number;
+  disposition: 'INGESTED' | 'DUPLICATE' | 'FAILED' | 'SKIPPED' | 'RETRYABLE';
+  status?: string;
+  outcome?: string | null;
+  reason?: string | null;
+  topConfidence?: number | null;
+}
 
 /** Meta sends media ids, not bytes; these are the message types that carry a document. */
 const DOCUMENT_BEARING_TYPES = new Set(['image', 'document']);
@@ -15,12 +26,19 @@ const DOCUMENT_BEARING_TYPES = new Set(['image', 'document']);
  * Inbound WhatsApp webhook (simplified Meta Cloud API shape).
  *
  * Media arrives as an id that must be resolved to bytes through the `MediaStore` seam.
- * A media id we cannot resolve is logged and skipped rather than failed: Meta retries
- * aggressively, and a 500 here would replay the whole batch including messages we have
- * already ingested successfully.
+ * Each message is processed in isolation, and the two ways a media id can fail are kept
+ * apart: an id the provider does not know is skipped, while a provider that is reachable
+ * but failing is reported as retryable so the receipt is not silently lost.
  */
 export async function POST(request: Request) {
-  const rawBody = await request.text();
+  let rawBody: string;
+  try {
+    rawBody = await request.text();
+  } catch (error) {
+    return badRequest(
+      `Could not read the request body: ${error instanceof Error ? error.message : 'unknown error'}`,
+    );
+  }
 
   const verdict = verifySignature({
     rawBody,
@@ -42,34 +60,40 @@ export async function POST(request: Request) {
     return badRequest('WhatsApp webhook payload failed validation', parsed.error);
   }
 
-  try {
-    const messages = extractWhatsAppMessages(parsed.data);
-    const mediaStore = getMediaStore();
-    const results = [];
+  const messages = extractWhatsAppMessages(parsed.data);
+  const mediaStore = getMediaStore();
+  const results: MessageOutcome[] = [];
 
-    for (const message of messages) {
-      if (!DOCUMENT_BEARING_TYPES.has(message.type)) {
-        // Text messages, reactions and status callbacks share this endpoint. Not an error.
-        log.info('WhatsApp webhook: non-document message ignored', {
-          wamid: message.id,
-          type: message.type,
-        });
-        continue;
-      }
+  // Each message is isolated. The loop used to sit inside one try, so a single media
+  // fetch that threw aborted every message after it and still answered 200 — Meta would
+  // never redeliver, and those receipts were gone with no record of them.
+  for (const message of messages) {
+    if (!DOCUMENT_BEARING_TYPES.has(message.type)) {
+      // Text messages, reactions and status callbacks share this endpoint. Not an error.
+      log.info('WhatsApp webhook: non-document message ignored', {
+        wamid: message.id,
+        type: message.type,
+      });
+      continue;
+    }
 
-      const media = message.type === 'image' ? message.image : message.document;
-      if (!media) continue; // unreachable: the Zod refinement guarantees it
+    const media = message.type === 'image' ? message.image : message.document;
+    if (!media) continue; // unreachable: the Zod refinement guarantees it
 
+    try {
       const object = await mediaStore.fetch(media.id);
+
       if (!object) {
-        log.warn('WhatsApp webhook: media id could not be resolved; skipping', {
+        // Permanently unknown to the provider. Retrying will never help, so this is a
+        // skip rather than a retry — distinct from the throw handled below.
+        log.warn('WhatsApp webhook: media id unknown; skipping', {
           wamid: message.id,
           mediaId: media.id,
         });
         results.push({
           wamid: message.id,
-          disposition: 'FAILED' as const,
-          reason: `Media ${media.id} not found`,
+          disposition: 'SKIPPED',
+          reason: `Media ${media.id} is unknown to the provider`,
         });
         continue;
       }
@@ -94,12 +118,34 @@ export async function POST(request: Request) {
         reason: result.match?.reason ?? result.detail ?? null,
         topConfidence: result.match?.candidates[0]?.confidence ?? null,
       });
-    }
+    } catch (error) {
+      // `MediaUnavailableError` is the provider being reachable but failing, as opposed
+      // to the id being unknown. The distinction is the whole point: there are no bytes,
+      // so there is no content hash and therefore no Document we could park in FAILED.
+      // The only way not to lose the receipt is for Meta to send it again, which means
+      // this message must be reported as retryable rather than quietly acknowledged.
+      const retryable = error instanceof MediaUnavailableError;
+      const detail = error instanceof Error ? error.message : String(error);
 
-    return accepted({ messages: results });
-  } catch (error) {
-    return acceptedDespiteFailure('WhatsApp webhook', error);
+      log.error('WhatsApp webhook: message failed, continuing with the rest', {
+        wamid: message.id,
+        mediaId: media.id,
+        retryable,
+        detail,
+      });
+
+      results.push({
+        wamid: message.id,
+        disposition: retryable ? 'RETRYABLE' : 'FAILED',
+        reason: detail,
+      });
+    }
   }
+
+  // One unreadable message makes the whole response a request for redelivery. The items
+  // that succeeded are reported either way, and dedupe on redelivery.
+  const anyRetryable = results.some((r) => r.disposition === 'RETRYABLE');
+  return anyRetryable ? retryLater({ messages: results }) : accepted({ messages: results });
 }
 
 /** Meta's subscription handshake. */

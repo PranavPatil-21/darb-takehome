@@ -32,10 +32,12 @@ export function ModuleNav({
   const pathname = usePathname();
 
   return (
-    <div className="border-b">
-      <div className="mx-auto w-full max-w-6xl px-6">
-        <div className="flex flex-wrap items-center justify-between gap-3 py-3">
-          <span className="text-sm font-semibold tracking-tight">{moduleName}</span>
+    // Sticky, on an opaque surface. The nav carries the queue counts, which are the one
+    // thing a reviewer wants visible while scrolling a 200-row register.
+    <div className="sticky top-0 z-30 border-b bg-card/95 backdrop-blur supports-[backdrop-filter]:bg-card/80">
+      <div className="mx-auto w-full max-w-[90rem] px-4 sm:px-6 lg:px-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-3.5 pb-2">
+          <span className="text-sm font-semibold tracking-[-0.006em]">{moduleName}</span>
           {switcher}
         </div>
 
@@ -43,7 +45,7 @@ export function ModuleNav({
           {/* Horizontally scrollable rather than wrapped: a nav that reflows to two rows
               moves the page content down and makes the active item jump between
               sections. */}
-          <ul className="-mb-px flex gap-1 overflow-x-auto">
+          <ul className="-mb-px flex gap-0.5 overflow-x-auto">
             {items.map((item) => {
               const active = isCurrent(item.href, pathname);
               const count = item.badge ? counts[item.badge] : 0;
@@ -55,21 +57,19 @@ export function ModuleNav({
                     title={item.hint}
                     aria-current={active ? 'page' : undefined}
                     className={cn(
-                      'inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm transition-colors',
+                      'inline-flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm transition-colors',
                       'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset',
                       active
                         ? 'border-foreground font-medium text-foreground'
-                        : 'border-transparent text-muted-foreground hover:text-foreground',
+                        : 'border-transparent text-muted-foreground hover:border-border hover:text-foreground',
                     )}
                   >
                     {item.label}
                     {count > 0 ? (
                       <span
                         className={cn(
-                          'inline-flex min-w-5 items-center justify-center rounded-full px-1.5 text-xs tabular-nums',
-                          item.badge === 'exceptions'
-                            ? 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200'
-                            : 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+                          'inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11px] font-medium tabular-nums',
+                          'bg-attention text-attention-foreground ring-1 ring-inset ring-attention-border/50',
                         )}
                       >
                         {count}

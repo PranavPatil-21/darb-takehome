@@ -1,7 +1,12 @@
 import { signalLabel, t } from '@/lib/content/messages';
 import type { SignalBreakdown } from '@/lib/domain/enums';
+import { SIGNAL_NAMES } from '@/lib/matching/signal-names';
 
-const ORDER = ['amount', 'cardLast4', 'merchant', 'date'] as const;
+// Read from the engine's own list rather than restated here. A hardcoded copy was the one
+// place in the add-a-signal path with nothing enforcing it: a new signal would be scored,
+// persisted and ranked, and then render nowhere, silently — the reviewer would be shown a
+// breakdown missing the evidence the decision was partly made on.
+const ORDER = SIGNAL_NAMES;
 
 function barColour(score: number): string {
   if (score >= 0.85) return 'bg-emerald-500';

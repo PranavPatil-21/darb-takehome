@@ -16,11 +16,11 @@ export function SearchBox({
   age,
 }: {
   defaultValue: string;
-  status?: TransactionDocumentationStatus;
-  age?: AgeBucket;
+  status?: TransactionDocumentationStatus | undefined;
+  age?: AgeBucket | undefined;
 }) {
   return (
-    <form action={modulePath('transactions')} method="get" className="flex items-center gap-2">
+    <form action={modulePath('transactions')} method="get" className="flex items-center">
       {status ? <input type="hidden" name="status" value={status} /> : null}
       {age ? <input type="hidden" name="age" value={age} /> : null}
 
@@ -32,11 +32,11 @@ export function SearchBox({
         name="q"
         defaultValue={defaultValue}
         placeholder={t('charges.search.placeholder')}
-        className="h-8 w-48 rounded-md border bg-background px-3 text-xs placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-8 w-48 rounded-l-lg border border-r-0 bg-card px-3 text-xs shadow-xs placeholder:text-muted-foreground focus-visible:relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <button
         type="submit"
-        className="h-8 rounded-md border px-3 text-xs transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="h-8 rounded-r-lg border bg-card px-3 text-xs shadow-xs transition-colors hover:bg-accent focus-visible:relative focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         Search
       </button>

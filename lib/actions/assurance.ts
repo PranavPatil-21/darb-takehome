@@ -1,5 +1,7 @@
 'use server';
 
+import { recomputeDocumentStatus } from '@/lib/services/document-status';
+
 import { t } from '@/lib/content/messages';
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
@@ -10,6 +12,7 @@ import { can, resolveActor, type Actor } from '@/lib/platform/identity';
 import { recordEvent } from '@/lib/platform/audit';
 import { canVerify } from '@/lib/platform/verification';
 import { releaseConfirmedDocumentSlot } from '@/lib/services/slot-claim';
+import { recomputeDocumentationStatus } from '@/lib/services/charge-status';
 import { CONFIRMED_MATCH_STATUSES, decodeMatchStatus } from '@/lib/domain/enums';
 import { modulePath } from '@/lib/platform/module-config';
 
@@ -125,6 +128,14 @@ export const upholdAttachment = actionClient
     return result;
   });
 
+/** The attachment was decided by somebody else between our read and our write. */
+class StaleAttachmentError extends Error {
+  constructor(readonly matchId: number) {
+    super(`Attachment ${matchId} was decided concurrently`);
+    this.name = 'StaleAttachmentError';
+  }
+}
+
 export const overturnAttachment = actionClient
   .schema(overturnSchema)
   .action(async ({ parsedInput }): Promise<AssuranceResult> => {
@@ -175,10 +186,20 @@ export const overturnAttachment = actionClient
       // one-confirmed-document-per-transaction guarantee holds through this path too.
       // Writing `confirmedDocumentId = null` directly here would be a second write path
       // to the column the whole correctness argument rests on.
-      await releaseConfirmedDocumentSlot(tx.transaction, match.transactionId, match.documentId);
-
-      await tx.documentMatch.update({
-        where: { id: match.id },
+      // The slot is released without recomputing the cached charge status here: the match
+      // below has not flipped yet, so a recompute at this point would derive the status of
+      // a world that is about to stop existing — and that is precisely what it used to do,
+      // leaving the charge reading MISSING when its match says REJECTED.
+      // Compare-and-set FIRST, then release. The order is the correctness argument.
+      //
+      // Releasing before the flip meant a lost race committed a half-write: `return`
+      // inside `$transaction` *resolves* the callback, so Prisma commits — leaving the
+      // slot freed while `DocumentMatch.status` still said CONFIRMED. A second document
+      // could then claim the free slot, and the charge ended up holding two confirmed
+      // matches, which is the one thing this module exists to prevent. The unique index
+      // on `confirmedDocumentId` cannot catch it: that constrains the mirror, not the fact.
+      const { count: flipped } = await tx.documentMatch.updateMany({
+        where: { id: match.id, status: match.status },
         data: {
           status: 'REJECTED',
           verifiedBy: actor.id,
@@ -187,17 +208,15 @@ export const overturnAttachment = actionClient
         },
       });
 
-      const remaining = await tx.documentMatch.count({
-        where: { documentId: match.documentId, status: 'CANDIDATE' },
-      });
+      // Thrown, not returned, so the transaction rolls back and nothing above survives —
+      // the same choice `rejectMatch` makes for the same race.
+      if (flipped === 0) throw new StaleAttachmentError(match.id);
 
-      await tx.document.update({
-        where: { id: match.documentId },
-        data: {
-          status: remaining > 0 ? 'NEEDS_REVIEW' : 'UNMATCHED',
-          failureReason: remaining > 0 ? null : 'ALL_CANDIDATES_REJECTED',
-        },
-      });
+      await releaseConfirmedDocumentSlot(tx.transaction, match.transactionId, match.documentId);
+
+      // Both caches recomputed only now, after every input to them has settled.
+      await recomputeDocumentationStatus(tx, match.transactionId);
+      await recomputeDocumentStatus(tx, match.documentId);
 
       await recordEvent(tx.reviewEvent, {
         documentId: match.documentId,
@@ -221,7 +240,15 @@ export const overturnAttachment = actionClient
         effect: 'OVERTURNED' as const,
         message: t('result.detached'),
       };
-    });
+    })
+      .catch((error): AssuranceResult => {
+        // A lost race is not a fault. The other checker did the work; reporting it as a
+        // server error would tell the operator to retry something that already happened.
+        if (error instanceof StaleAttachmentError) {
+          return { ok: false, effect: 'STALE' as const, message: t('result.alreadyRemoved') };
+        }
+        throw error;
+      });
 
     revalidatePath(modulePath('assurance'));
     revalidatePath(modulePath('review'));

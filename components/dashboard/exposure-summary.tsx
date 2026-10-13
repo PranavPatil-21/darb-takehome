@@ -40,20 +40,22 @@ export function ExposureSummary({ data, actor }: { data: DashboardData; actor: A
   const staleBy = describeGap(period?.to ?? null, new Date());
 
   return (
-    <section>
+    <section className="rounded-xl border bg-card p-6 shadow-xs">
       {/* The eyebrow names the period only. It previously read "Receipt coverage", which
           contradicted the figure directly beneath it — that figure is the amount *not*
           covered, so scanning the two together said the opposite of the truth. The
           headline now carries its own meaning and does not depend on the label above it. */}
-      <h1 className="text-sm font-medium text-muted-foreground">
+      <h1 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         {period ? period.label : t('overview.period.all')}
       </h1>
 
       {clear ? (
-        <p className="mt-2 text-3xl font-semibold tracking-tight">{t('overview.allCovered')}</p>
+        <p className="mt-2.5 text-3xl font-semibold tracking-[-0.021em]">
+          {t('overview.allCovered')}
+        </p>
       ) : (
         <>
-          <p className="mt-2 text-3xl font-semibold tracking-tight tabular-nums">
+          <p className="mt-2.5 text-3xl font-semibold tabular-nums tracking-[-0.021em]">
             {t('overview.unsupported', { amount: formatMinorUnits(undocumentedSpend) })}
           </p>
           <p className="mt-1.5 text-sm text-muted-foreground tabular-nums">
@@ -82,7 +84,7 @@ export function ExposureSummary({ data, actor }: { data: DashboardData; actor: A
           reviewer "96 attachments need sign-off" sends them to a screen that refuses
           them, and a dashboard that hands out work the reader is not permitted to pick up
           teaches them to distrust the rest of it. */}
-      <div className="mt-5 flex flex-wrap items-center gap-3">
+      <div className="mt-6 flex flex-wrap items-center gap-2.5 border-t pt-5">
         {can(actor, 'decide') ? (
           <Desk
             href={modulePath('review')}
@@ -99,10 +101,13 @@ export function ExposureSummary({ data, actor }: { data: DashboardData; actor: A
             primary={!can(actor, 'decide')}
           />
         ) : null}
+        {/* Not a separate desk any more — the same queue, counted separately, because
+            "needs a decision" and "needs a different kind of fix" are different asks of
+            the same person. */}
         <Desk
-          href={modulePath('exceptions')}
-          count={data.exceptions}
-          messageKey="overview.desk.exceptions"
+          href={modulePath('review')}
+          count={data.blocked}
+          messageKey="overview.desk.blocked"
         />
       </div>
     </section>
@@ -133,8 +138,8 @@ function Desk({
       href={href}
       className={
         primary
-          ? 'inline-flex h-10 items-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
-          : 'inline-flex h-10 items-center rounded-md border px-4 text-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
+          ? 'inline-flex h-9 items-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground shadow-xs transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
+          : 'inline-flex h-9 items-center rounded-lg border bg-card px-4 text-sm shadow-xs transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2'
       }
     >
       {t(messageKey, { count })}

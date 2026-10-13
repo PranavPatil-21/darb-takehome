@@ -1,8 +1,18 @@
 import { t } from '@/lib/content/messages';
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 import prisma from '@/lib/prisma';
-import { can, resolveActor } from '@/lib/platform/identity';
+import { can, canSeeClient, resolveActor } from '@/lib/platform/identity';
 import { modulePath } from '@/lib/platform/module-config';
+import {
+  WORK_KINDS,
+  classifyWorkItem,
+  getWorkKindCounts,
+  getWorkQueue,
+  isDecidable,
+  type WorkKind,
+} from '@/lib/platform/work-queue';
+import { KindFilter } from '@/components/review/kind-filter';
 import { Page, PageHeader, EmptyState } from '@/components/shell/page';
 import { QueueList } from '@/components/review/queue-list';
 import { FocusedDocument } from '@/components/review/focused-document';
@@ -27,9 +37,9 @@ export const dynamic = 'force-dynamic';
 export default async function ReviewPage({
   searchParams,
 }: {
-  searchParams: Promise<{ doc?: string }>;
+  searchParams: Promise<{ doc?: string; kind?: string }>;
 }) {
-  const { doc } = await searchParams;
+  const { doc, kind } = await searchParams;
   const actor = await resolveActor();
 
   // The queue is guarded, not merely hidden from the navigation. A checker reaching this
@@ -58,41 +68,73 @@ export default async function ReviewPage({
     );
   }
 
-  const waiting = await prisma.document.findMany({
-    where: { status: 'NEEDS_REVIEW' },
-    // Oldest first: a queue that reorders itself while being worked is a queue nobody can
-    // finish, and the longest-waiting document is the one closest to a filing deadline.
-    orderBy: [{ receivedAt: 'asc' }, { id: 'asc' }],
-    select: {
-      id: true,
-      merchantName: true,
-      totalAmount: true,
-      currency: true,
-      documentDate: true,
-    },
-  });
+  // An unrecognised ?kind= is ignored rather than erroring: the filter is a convenience,
+  // and a stale bookmark should show the whole queue, not a dead end.
+  const activeKind = WORK_KINDS.includes(kind as WorkKind) ? (kind as WorkKind) : undefined;
+
+  // Everything waiting on a person, grouped by what that person has to do — scoped to
+  // what this actor may see, and bounded. Counts are of the whole queue so the chips can
+  // say what selecting them would reveal.
+  const [groups, kindCounts] = await Promise.all([
+    getWorkQueue(actor, { kind: activeKind }),
+    getWorkKindCounts(actor),
+  ]);
+  const waiting = groups.flatMap((group) => group.items);
 
   if (waiting.length === 0) {
+    // An empty *filter* is not an empty *queue*, and conflating them strands the reviewer.
+    // Working the last item of a kind is the normal end of a session, and this screen then
+    // said "nothing needs a decision" next to a nav badge reading Review 11 — with the
+    // chips gone, so the only offered exit was back to the overview.
+    const filtered = activeKind !== undefined;
+    const totalWaiting = Object.values(kindCounts).reduce((sum, count) => sum + count, 0);
+
     return (
       <Page>
         <PageHeader title={t('review.title')} />
+        {filtered ? <KindFilter counts={kindCounts} active={activeKind} /> : null}
         <EmptyState
-          title={t('review.empty.title')}
-          description={t('review.empty.body')}
+          title={filtered ? t('review.emptyFiltered.title') : t('review.empty.title')}
+          description={
+            filtered
+              ? t('review.emptyFiltered.body', { count: String(totalWaiting) })
+              : t('review.empty.body')
+          }
           action={
-            <Link href={modulePath()} className="text-sm underline underline-offset-4">
-              Back to the overview
-            </Link>
+            filtered ? (
+              <Link href={modulePath('review')} className="text-sm underline underline-offset-4">
+                Show everything waiting
+              </Link>
+            ) : (
+              <Link href={modulePath()} className="text-sm underline underline-offset-4">
+                Back to the overview
+              </Link>
+            )
           }
         />
       </Page>
     );
   }
 
-  const requested = doc ? Number(doc) : Number.NaN;
-  const focusedId = waiting.some((d) => d.id === requested) ? requested : waiting[0].id;
+  const decidableCount = groups
+    .filter((group) => group.decidable)
+    .reduce((sum, group) => sum + group.items.length, 0);
 
-  const focused = await prisma.document.findUniqueOrThrow({
+  const blockedCount = waiting.length - decidableCount;
+
+  const requested = doc ? Number(doc) : Number.NaN;
+  // `waiting` is non-empty here — the empty case returned above — but the fallback is
+  // written so that stays true if the guard above is ever moved.
+  const firstWaiting = waiting[0];
+  const focusedId =
+    waiting.some((d) => d.id === requested) ? requested : (firstWaiting?.id ?? requested);
+
+  // `findUnique`, not `findUniqueOrThrow`, and the result is checked below. The id is
+  // drawn from the already-scoped queue today, but the fallback above can carry a
+  // caller-supplied `?doc=` straight here — and an unscoped `findUniqueOrThrow` would
+  // then render another tenant's document in full, raw OCR text included, or 500 on a
+  // miss where every other detail view 404s.
+  const focused = await prisma.document.findUnique({
     where: { id: focusedId },
     include: {
       matches: {
@@ -103,12 +145,19 @@ export default async function ReviewPage({
     },
   });
 
+  // Not found, or outside this actor's scope — the same answer either way, so the URL
+  // cannot be used to probe which document ids exist.
+  if (!focused || !canSeeClient(actor, focused.clientId)) notFound();
+
   // The sender's human label — "Faisal Al-Harbi (driver, card 4412)" — turns an E.164
   // number into the person a reviewer would actually go and ask.
   const identity = await prisma.senderIdentity.findUnique({
     where: { identifier: focused.senderIdentifier },
     select: { label: true },
   });
+
+  const focusedKind = classifyWorkItem(focused);
+  const focusedGroup = groups.find((group) => group.kind === focusedKind);
 
   const candidates: CandidateCharge[] = focused.matches.map((match) => ({
     matchId: match.id,
@@ -122,15 +171,29 @@ export default async function ReviewPage({
   }));
 
   return (
-    <Page>
+    <Page width="wide">
       <PageHeader
         title={t('review.title')}
-        description={t('review.subtitle', { count: waiting.length })}
+        description={[
+          t('review.subtitle', { count: waiting.length }),
+          [
+            decidableCount > 0 ? t('review.subtitle.decidable', { count: decidableCount }) : null,
+            blockedCount > 0 ? t('review.subtitle.blocked', { count: blockedCount }) : null,
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        ]
+          .filter(Boolean)
+          .join(' ')}
       />
 
-      <div className="grid gap-8 lg:grid-cols-[18rem_1fr]">
-        <aside className="min-w-0 lg:sticky lg:top-8 lg:self-start">
-          <QueueList entries={waiting} focusedId={focusedId} />
+      <div className="mb-5">
+        <KindFilter counts={kindCounts} active={activeKind} />
+      </div>
+
+      <div className="grid gap-5 lg:grid-cols-[19rem_minmax(0,1fr)] lg:items-start">
+        <aside className="min-w-0 lg:sticky lg:top-[7.25rem]">
+          <QueueList groups={groups} focusedId={focusedId} activeKind={activeKind} />
         </aside>
 
         <FocusedDocument
@@ -142,6 +205,7 @@ export default async function ReviewPage({
             currency: focused.currency,
             documentDate: focused.documentDate,
             cardLast4: focused.cardLast4,
+            documentType: focused.documentType,
             vatNumber: focused.vatNumber,
             rawText: focused.rawText,
             failureReason: focused.failureReason,
@@ -149,6 +213,10 @@ export default async function ReviewPage({
             senderLabel: identity?.label ?? null,
           }}
           candidates={candidates}
+          // A document with no candidate cannot be confirmed or rejected; the focused
+          // pane shows what to do instead of buttons that cannot work.
+          decidable={focusedKind !== null && isDecidable(focusedKind)}
+          nextStep={focusedGroup?.nextStep ?? ''}
         />
       </div>
     </Page>

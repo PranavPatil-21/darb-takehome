@@ -21,11 +21,13 @@ export function RawTextPanel({ text, source }: { text: string | null; source: st
   const heading = t(source === 'EMAIL' ? 'review.rawText.email' : 'review.rawText.whatsapp');
 
   return (
-    <section className="mt-5">
-      <h3 className="text-xs font-medium text-muted-foreground">{heading}</h3>
+    <section className="overflow-hidden rounded-xl border bg-card shadow-xs">
+      <h3 className="border-b bg-surface-sunken px-5 py-2.5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        {heading}
+      </h3>
       <pre
         dir="auto"
-        className="mt-1.5 max-h-56 overflow-auto rounded-md border bg-muted/30 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"
+        className="max-h-64 overflow-auto px-5 py-4 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words"
       >
         {text}
       </pre>

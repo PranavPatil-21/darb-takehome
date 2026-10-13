@@ -40,19 +40,22 @@ export function ChargeStatusPill({
       <span
         title={presentation.hint}
         className={cn(
-          'inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs ring-1 ring-inset',
+          'inline-flex shrink-0 items-center rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset',
           TONE[presentation.tone],
         )}
       >
         {presentation.label}
       </span>
 
+      {/* A second badge, not a trailing sentence. "Documented · sign-off due" read as one
+          run-on label where it is really two independent facts — what the charge's
+          documentation state is, and whether somebody still has to countersign it. */}
       {awaitingVerification ? (
         <span
           title={t('chargeStatus.awaitingSignOff.hint')}
-          className="text-xs text-muted-foreground"
+          className="inline-flex shrink-0 items-center rounded-md bg-attention px-2 py-0.5 text-xs font-medium text-attention-foreground ring-1 ring-inset ring-attention-border/50"
         >
-          · sign-off due
+          sign-off due
         </span>
       ) : null}
     </span>

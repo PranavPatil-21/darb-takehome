@@ -18,32 +18,37 @@ import {
  */
 export function ActorSwitcher({ actor }: { actor: Actor }) {
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      {/* The role's job, stated rather than implied. Two names in a corner tell a reader
-          nothing; the difference between them is the whole point of there being two. */}
-      <span className="order-last w-full sm:order-none sm:w-auto sm:max-w-sm sm:text-right">
-        {ROLE_SUMMARY[actor.id]}
+    <div className="flex items-center gap-2.5 text-xs text-muted-foreground">
+      {/* The role's job, stated rather than implied — but as a tooltip, not as a sentence
+          competing with the brand for the top bar. It used to run across the header and
+          was the main reason that row read as cluttered. */}
+      <span className="hidden lg:inline" title={ROLE_SUMMARY[actor.id]}>
+        Acting as
       </span>
-      <span className="hidden sm:inline">Acting as</span>
-      {[DEVELOPMENT_ACTOR, DEVELOPMENT_CHECKER].map((candidate) => {
-        const active = candidate.id === actor.id;
-        return (
-          <form key={candidate.id} action={switchDevActor.bind(null, candidate.id)}>
-            <button
-              type="submit"
-              aria-current={active ? 'true' : undefined}
-              title={`${candidate.displayName} — can ${candidate.capabilities.join(', ')}`}
-              className={
-                active
-                  ? 'rounded-full bg-foreground px-2.5 py-1 text-background'
-                  : 'rounded-full border px-2.5 py-1 transition-colors hover:text-foreground'
-              }
-            >
-              {candidate.displayName}
-            </button>
-          </form>
-        );
-      })}
+
+      {/* One segmented control, not two loose pills. The two identities are mutually
+          exclusive, and a segmented control is the shape that says so. */}
+      <div className="flex items-center rounded-lg border bg-surface-sunken p-0.5">
+        {[DEVELOPMENT_ACTOR, DEVELOPMENT_CHECKER].map((candidate) => {
+          const active = candidate.id === actor.id;
+          return (
+            <form key={candidate.id} action={switchDevActor.bind(null, candidate.id)}>
+              <button
+                type="submit"
+                aria-current={active ? 'true' : undefined}
+                title={`${candidate.displayName} — ${ROLE_SUMMARY[candidate.id]}`}
+                className={
+                  active
+                    ? 'rounded-md bg-card px-2.5 py-1 font-medium text-foreground shadow-xs ring-1 ring-border/60'
+                    : 'rounded-md px-2.5 py-1 transition-colors hover:text-foreground'
+                }
+              >
+                {candidate.displayName}
+              </button>
+            </form>
+          );
+        })}
+      </div>
     </div>
   );
 }

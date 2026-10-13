@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import prisma from '@/lib/prisma';
 import { moduleConfig, modulePath } from '@/lib/platform/module-config';
+import { MODULE_BASE_PATH } from '@/lib/platform/module-config';
 
 /**
  * The host application, stood in for.
@@ -43,7 +44,7 @@ export default async function HostShellPage() {
           <div>
             <h2 className="font-medium">{config.moduleName}</h2>
             <p className="mt-1 max-w-md text-sm text-muted-foreground">
-              Mounted at <code className="text-xs">{config.basePath}</code>. Receipts arrive
+              Mounted at <code className="text-xs">{MODULE_BASE_PATH}</code>. Receipts arrive
               by WhatsApp and email, are read by OCR and matched to card charges; anything
               the engine will not decide goes to a person.
             </p>

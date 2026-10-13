@@ -3,7 +3,7 @@ import { MockExtractor, setExtractor } from '@/lib/extraction';
 import { ingestDocument } from '@/lib/services/document-ingestion';
 import { confirmMatch, rejectMatch } from '@/lib/actions/review';
 import { runAction } from './helpers/actions';
-import { resetDatabase, seedMinimalWorld, testPrisma } from './helpers/db';
+import { resetDatabase, seedMinimalWorld, syncChargeStatuses, testPrisma } from './helpers/db';
 
 /**
  * Review-queue behaviour.
@@ -127,16 +127,31 @@ describe('confirmMatch', () => {
   });
 
   it('refuses to attach a document that is already confirmed for another transaction', async () => {
+    // Through `confirmMatch`, not around it.
+    //
+    // This used to call `prisma.transaction.update` directly and assert Prisma threw —
+    // which proves the index exists and nothing about the action. Deleting the entire
+    // P2002 branch in `confirmMatch` left it green, so the test named a behaviour it did
+    // not exercise. What matters to a reviewer is that the *action* refuses, and reports
+    // the refusal rather than throwing.
     const { documentId, matches } = await ingestAmbiguous();
     await confirm(matches[0]!.id);
 
-    // The @unique index on confirmedDocumentId is what catches this direction.
-    await expect(
-      testPrisma.transaction.update({
-        where: { id: matches[1]!.transactionId },
-        data: { confirmedDocumentId: documentId },
-      }),
-    ).rejects.toThrow(/Unique constraint|P2002/i);
+    const blocked = await confirm(matches[1]!.id);
+
+    expect(blocked.ok).toBe(false);
+    expect(blocked.effect).toBe('BLOCKED');
+    expect(blocked.message).not.toMatch(/something went wrong/i);
+
+    // The first charge keeps the document; the second gets nothing.
+    const second = await testPrisma.transaction.findUniqueOrThrow({
+      where: { id: matches[1]!.transactionId },
+    });
+    expect(second.confirmedDocumentId).toBeNull();
+    const confirmedElsewhere = await testPrisma.transaction.count({
+      where: { confirmedDocumentId: documentId },
+    });
+    expect(confirmedElsewhere).toBe(1);
   });
 
   it('survives two reviewers confirming different candidates at the same time', async () => {
@@ -252,5 +267,85 @@ describe('a decision does not erase why the document is in the queue', () => {
     const after = await testPrisma.document.findUniqueOrThrow({ where: { id: documentId } });
     expect(after.status).toBe('NEEDS_REVIEW');
     expect(after.failureReason).toBe('AMBIGUOUS_TOP_CANDIDATES');
+  });
+});
+
+describe('the database refuses a second confirmed document for one charge', () => {
+  it('rejects the write even when the application guard is bypassed entirely', async () => {
+    // The brief asks for this rule "at the data layer, not just in UI logic". The scalar
+    // `confirmedDocumentId` column gives one *mirror* per charge; what the rest of the
+    // system reads as the truth is `DocumentMatch.status`, and nothing constrained it —
+    // so a lost race in `overturnAttachment` left one charge holding two CONFIRMED rows.
+    //
+    // This goes around `confirmMatch` on purpose: a constraint that only holds when the
+    // application remembers to check is not a constraint.
+    const { matches } = await ingestAmbiguous();
+    const transactionId = matches[0]!.transactionId;
+
+    // The slot moves with the match, because that is the state production reaches and
+    // the global invariants check for it.
+    await testPrisma.documentMatch.update({
+      where: { id: matches[0]!.id },
+      data: { status: 'CONFIRMED' },
+    });
+    await testPrisma.transaction.update({
+      where: { id: transactionId },
+      data: { confirmedDocumentId: matches[0]!.documentId },
+    });
+    await syncChargeStatuses();
+
+    const rival = await testPrisma.document.create({
+      data: {
+        source: 'WHATSAPP',
+        externalId: 'wamid.RIVAL-CONFIRMED',
+        contentHash: 'hash-rival-confirmed',
+        senderIdentifier: '966551234567',
+        clientId: 1,
+        status: 'NEEDS_REVIEW',
+      },
+    });
+
+    await expect(
+      testPrisma.documentMatch.create({
+        data: {
+          documentId: rival.id,
+          transactionId,
+          confidence: 0.99,
+          signals: '{}',
+          status: 'CONFIRMED',
+        },
+      }),
+    ).rejects.toThrow(/Unique constraint|P2002/i);
+
+    // And the charge still holds exactly one.
+    const confirmed = await testPrisma.documentMatch.count({
+      where: { transactionId, status: { in: ['CONFIRMED', 'AUTO_CONFIRMED'] } },
+    });
+    expect(confirmed).toBe(1);
+  });
+
+  it('still allows many live candidates on one charge', async () => {
+    // The index is partial for this reason: a plain `@@unique(transactionId)` would stop
+    // two documents ever being *proposed* for one charge, which is the review queue's
+    // whole job.
+    const { matches } = await ingestAmbiguous();
+    const transactionId = matches[0]!.transactionId;
+
+    const second = await testPrisma.document.create({
+      data: {
+        source: 'WHATSAPP',
+        externalId: 'wamid.SECOND-CANDIDATE',
+        contentHash: 'hash-second-candidate',
+        senderIdentifier: '966551234567',
+        clientId: 1,
+        status: 'NEEDS_REVIEW',
+      },
+    });
+
+    await expect(
+      testPrisma.documentMatch.create({
+        data: { documentId: second.id, transactionId, confidence: 0.8, signals: '{}' },
+      }),
+    ).resolves.toBeDefined();
   });
 });

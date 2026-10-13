@@ -136,6 +136,12 @@ model Document {
   confirmedForTransaction Transaction?    @relation("ConfirmedDocument")
 
   @@index([status])
+  /// Both registers read documents the same way: narrow to one client, filter on status,
+  /// and order by arrival. `@@index([status])` alone left the client filter and the sort
+  /// uncovered, so every page of the document register and every pass of the work queue
+  /// paid for a filesort. The charge side already had four composite indexes tuned to its
+  /// register; this is the document side catching up.
+  @@index([clientId, status, receivedAt])
 }
 
 model DocumentMatch {

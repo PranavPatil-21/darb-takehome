@@ -42,25 +42,30 @@ export type MakerCheckerMode =
  * documented default.
  */
 
+/**
+ * Where the capability is mounted. **A constant, not configuration.**
+ *
+ * It used to be a `ModuleConfig` field, settable from `DARB_BASE_PATH` and from
+ * `configureModule`, and documented as "where the capability is mounted". Setting it
+ * bricked the product: `modulePath()` rewrote every link while the App Router kept
+ * serving the literal `app/vat/` directory, so with `/receipts` configured every nav
+ * href and the host page's own entry link returned 404 while `/vat` still worked.
+ *
+ * Removing it from the environment was half a fix — a host calling
+ * `configureModule({ basePath })` reached exactly the same broken state. A knob that
+ * reports success and makes the product unreachable is worse than no knob, so there is
+ * no knob.
+ *
+ * Moving the mount is a directory rename (`app/vat` → `app/<name>`) plus this constant,
+ * or a rewrite rule in the host. Both are deliberate acts, which is the honest shape for
+ * something the filesystem decides.
+ *
+ * `/review` is additionally served at the root regardless, because docs/requirements.md
+ * names that path and the contract does not move because the module gained a home.
+ */
+export const MODULE_BASE_PATH = '/vat';
+
 export interface ModuleConfig {
-  /**
-   * Where the capability is mounted. **Read-only — not configurable from the environment.**
-   *
-   * It used to be settable via `DARB_BASE_PATH`, documented as "where the capability is
-   * mounted", and setting it bricked the product: `modulePath()` rewrote every link while
-   * the App Router kept serving the literal `app/vat/` directory, so with
-   * `DARB_BASE_PATH=/receipts` every nav href and the host page's own entry link returned
-   * 404 while `/vat` still worked. A knob that reports success and makes the product
-   * unreachable is worse than no knob.
-   *
-   * Moving the mount is a directory rename (`app/vat` → `app/<name>`) plus this constant,
-   * or a rewrite rule in the host. Both are deliberate acts, which is the honest shape for
-   * something the filesystem decides.
-   *
-   * `/review` is additionally served at the root regardless, because docs/requirements.md
-   * names that path and the contract does not move just because the module gained a home.
-   */
-  basePath: string;
 
   /** Shown in the module's own navigation, so it reads as part of the host product. */
   moduleName: string;
@@ -96,7 +101,6 @@ export interface ModuleConfig {
 }
 
 export const DEFAULT_MODULE_CONFIG: ModuleConfig = {
-  basePath: '/vat',
   moduleName: 'VAT receipts',
   makerChecker: {
     // OFF by default: adding a control to a working system without being asked is how a
@@ -190,7 +194,7 @@ function isMakerCheckerMode(value: string | undefined): value is MakerCheckerMod
 }
 
 export function modulePath(...segments: string[]): string {
-  const base = moduleConfig().basePath.replace(/\/$/, '');
+  const base = MODULE_BASE_PATH.replace(/\/$/, '');
   if (segments.length === 0) return base || '/';
   return `${base}/${segments.map((s) => String(s).replace(/^\//, '')).join('/')}`;
 }

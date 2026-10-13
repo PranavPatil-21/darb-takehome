@@ -61,13 +61,24 @@ describe('what the system does for itself', () => {
     // merchant normalisation improves. The trail has to show what was on screen at the
     // time, not what the engine would say today.
     const result = await ingest('whatsapp-alfanar-exact');
-    const event = (await documentHistory(result.documentId, testPrisma))[0]!;
-
     const match = await testPrisma.documentMatch.findFirstOrThrow({
       where: { documentId: result.documentId },
     });
+    const atTheTime = match.confidence;
 
-    expect(event.confidence).toBeCloseTo(match.confidence, 4);
+    // Move the live number afterwards, which is what a threshold change or a better
+    // normaliser does. Comparing the event against the match as it stands *now* would
+    // pass just as well if the trail joined the figure live — which is the implementation
+    // this test exists to rule out.
+    await testPrisma.documentMatch.update({
+      where: { id: match.id },
+      data: { confidence: 0.1234 },
+    });
+
+    const event = (await documentHistory(result.documentId, testPrisma))[0]!;
+
+    expect(event.confidence).toBeCloseTo(atTheTime, 4);
+    expect(event.confidence).not.toBeCloseTo(0.1234, 4);
   });
 
   it('records nothing for a document that attached to nothing', async () => {
@@ -126,10 +137,30 @@ describe('the trail as a narrative', () => {
       externalId: 'wamid.OTHER',
     });
 
+    // B gets an event of its own. In this fixture world it does not auto-attach, so it
+    // had no trail at all — which is precisely why the old assertion passed without
+    // proving anything.
+    await recordEvent(testPrisma.reviewEvent, {
+      documentId: b.documentId,
+      action: 'REJECTED',
+      actorId: 'faisal',
+      actorRole: 'MAKER',
+    });
+
     const historyA = await documentHistory(a.documentId, testPrisma);
     const historyB = await documentHistory(b.documentId, testPrisma);
 
-    expect(historyA.every((e) => e.id !== historyB[0]?.id)).toBe(true);
+    // Both non-empty first. The assertion this replaces was
+    // `historyA.every((e) => e.id !== historyB[0]?.id)`, and `historyB[0]?.id` is
+    // `undefined` for an empty history — so every id differed from it and the test passed
+    // without either document having a trail at all.
+    expect(historyA.length).toBeGreaterThan(0);
+    expect(historyB.length).toBeGreaterThan(0);
+
+    // Disjoint in both directions, and each history is about its own document.
+    const idsB = new Set(historyB.map((e) => e.id));
+    expect(a.documentId).not.toBe(b.documentId);
+    expect(historyA.some((e) => idsB.has(e.id))).toBe(false);
   });
 });
 

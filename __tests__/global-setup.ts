@@ -19,4 +19,12 @@ export default function globalSetup(): void {
     stdio: 'ignore',
     env: { ...process.env, DATABASE_URL: 'file:./test.db' },
   });
+
+  // `db push` builds the schema and nothing else. The one-confirmed-document-per-charge
+  // rule is a partial unique index Prisma's schema language cannot express, so without
+  // this the test database would lack the very constraint several tests exist to prove.
+  execSync('node scripts/apply-constraints.mjs', {
+    stdio: 'ignore',
+    env: { ...process.env, DATABASE_URL: 'file:./test.db' },
+  });
 }

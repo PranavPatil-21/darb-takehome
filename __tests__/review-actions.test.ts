@@ -235,3 +235,22 @@ describe('rejectMatch', () => {
     expect(reconsidered.effect).toBe('CONFIRMED');
   });
 });
+
+describe('a decision does not erase why the document is in the queue', () => {
+  it('keeps the matcher’s reason when a sibling candidate is rejected', async () => {
+    // `failureReason` carries two different things: *why unmatched* for UNMATCHED rows,
+    // and *why a human is looking* for NEEDS_REVIEW rows — which is what the work queue
+    // groups by and what the reviewer reads as the headline. The status recompute treated
+    // it as the first meaning only and nulled it otherwise, so rejecting one candidate
+    // silently stripped the reason from the document and moved it to a different queue.
+    const { documentId, matches } = await ingestAmbiguous();
+    const before = await testPrisma.document.findUniqueOrThrow({ where: { id: documentId } });
+    expect(before.failureReason).toBe('AMBIGUOUS_TOP_CANDIDATES');
+
+    await reject(matches[0]!.id);
+
+    const after = await testPrisma.document.findUniqueOrThrow({ where: { id: documentId } });
+    expect(after.status).toBe('NEEDS_REVIEW');
+    expect(after.failureReason).toBe('AMBIGUOUS_TOP_CANDIDATES');
+  });
+});

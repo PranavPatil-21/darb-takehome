@@ -25,7 +25,7 @@ export async function recomputeDocumentStatus(
 ): Promise<DocumentStatus | null> {
   const document = await prisma.document.findUnique({
     where: { id: documentId },
-    select: { status: true, matches: { select: { status: true } } },
+    select: { status: true, failureReason: true, matches: { select: { status: true } } },
   });
 
   // Deleted underneath us. Throwing here would fail a decision that otherwise succeeded.
@@ -39,7 +39,7 @@ export async function recomputeDocumentStatus(
 
   await prisma.document.update({
     where: { id: documentId },
-    data: { status, failureReason: documentFailureReasonOf(status, matches) },
+    data: { status, failureReason: documentFailureReasonOf(status, matches, document.failureReason) },
   });
 
   return status;

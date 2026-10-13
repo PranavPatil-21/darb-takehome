@@ -3,6 +3,7 @@ import prismaDefault from '@/lib/prisma';
 import { clientScopeFilter, type Actor } from '@/lib/platform/identity';
 import { workKindLabel, workKindNextStep, workKindWhy } from '@/lib/content/messages';
 import { decodeDocumentStatus } from '@/lib/domain/enums';
+import type { MatchReason } from '@/lib/services/transaction-matcher';
 
 /**
  * Everything waiting on a person, in one taxonomy.
@@ -69,6 +70,39 @@ export interface ClassifiableDocument {
 }
 
 /**
+ * Which queue a matcher reason belongs in.
+ *
+ * `Record<MatchReason, WorkKind>` on purpose: adding a reason code to the matcher without
+ * giving it a home here is a **compile error**, not a silent fallback. It used to be a
+ * `switch` with a `default`, whose comment claimed `work-queue.test.ts` would fail if a
+ * known reason reached it — it would not, because the fallback returns a valid kind and
+ * the test only checks that one comes back. `UNEXPLAINED_AMOUNT_GAP` was added to the
+ * engine and reached the queue through that fallback for exactly that reason.
+ */
+const WORK_KIND_FOR_REASON: Record<MatchReason, WorkKind> = {
+  AMBIGUOUS_TOP_CANDIDATES: 'CHOOSE_CHARGE',
+
+  // All four are "the numbers need a person": one is short of the bar, one came off a
+  // scan the OCR distrusts, one rests on too few signals, and one has a gap between the
+  // receipt total and the charge that only a human can explain as a tip.
+  MID_CONFIDENCE: 'CHECK_FIGURES',
+  LOW_EXTRACTION_CONFIDENCE: 'CHECK_FIGURES',
+  INSUFFICIENT_CORROBORATION: 'CHECK_FIGURES',
+  UNEXPLAINED_AMOUNT_GAP: 'CHECK_FIGURES',
+
+  WEAK_EVIDENCE: 'WEAK_EVIDENCE',
+  TRANSACTION_ALREADY_DOCUMENTED: 'POSSIBLE_DUPLICATE',
+
+  NO_PLAUSIBLE_CANDIDATE: 'NO_CHARGE_FOUND',
+  NO_CANDIDATE_TRANSACTIONS: 'NO_CHARGE_FOUND',
+
+  // Terminal or settled; these never reach the switch from a queue status, but the
+  // mapping has to be total over the union.
+  UNUSABLE_EXTRACTION: 'UNREADABLE',
+  CONFIDENT_SINGLE_CANDIDATE: 'CHECK_FIGURES',
+};
+
+/**
  * Which job this document represents, or null if it is not waiting on anyone.
  *
  * Pure, so the mapping is testable without a database — which is what lets
@@ -93,27 +127,13 @@ export function classifyWorkItem(document: ClassifiableDocument): WorkKind | nul
   // diagnosis downstream of scoping is noise.
   if (clientId === null) return 'SENDER_UNKNOWN';
 
-  switch (failureReason) {
-    case 'AMBIGUOUS_TOP_CANDIDATES':
-      return 'CHOOSE_CHARGE';
-    case 'MID_CONFIDENCE':
-    case 'LOW_EXTRACTION_CONFIDENCE':
-    case 'INSUFFICIENT_CORROBORATION':
-      return 'CHECK_FIGURES';
-    case 'WEAK_EVIDENCE':
-      return 'WEAK_EVIDENCE';
-    case 'TRANSACTION_ALREADY_DOCUMENTED':
-      return 'POSSIBLE_DUPLICATE';
-    case 'NO_PLAUSIBLE_CANDIDATE':
-    case 'NO_CANDIDATE_TRANSACTIONS':
-      return 'NO_CHARGE_FOUND';
-    default:
-      break;
-  }
+  const known = WORK_KIND_FOR_REASON[failureReason as MatchReason];
+  if (known) return known;
 
-  // A reason the taxonomy has not met yet. Falling back on status rather than dropping
-  // the document is deliberate: an unrecognised reason is a reason to look, not a reason
-  // to disappear. `work-queue.test.ts` fails if a *known* reason reaches here.
+  // A reason the taxonomy has not met yet — which now means a value that is not a
+  // `MatchReason` at all, since the table above is exhaustive over that union. Falling
+  // back on status rather than dropping the document is deliberate: an unrecognised
+  // reason is a reason to look, not a reason to disappear.
   if (status === 'NEEDS_REVIEW') return 'CHECK_FIGURES';
   return 'NO_CHARGE_FOUND';
 }

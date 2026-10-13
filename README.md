@@ -206,7 +206,7 @@ components/
   dashboard/                        coverage headline, worklists
   chrome/, documents/               nav and the one place status becomes colour
   assurance/, charges/, shell/, ui/ maker-checker, charge views, layout, primitives
-prisma/schema.prisma, seed.ts       2 clients · 8 senders · 202 transactions (22 scripted + 180 background)
+prisma/schema.prisma, seed.ts       2 clients · 9 senders · 205 charges · work in every queue
 fixtures/                           18 documents + their webhook payloads
 __tests__/                          32 suites, mirroring the modules above
 scripts/                            seed/demo tooling — the sample-webhook runner lives here

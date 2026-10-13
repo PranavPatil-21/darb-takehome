@@ -401,7 +401,36 @@ extractor into a consumer's bundle.
 ### Grown: seed and fixture counts
 
 The brief asks for "~15 transactions across 2 clients" and "at least 6 fixture documents".
-This seeds **202 transactions** — 22 scripted plus 180 generated — and ships 18 fixtures.
+This seeds **205 charges** — 22 scripted, 180 generated, and 3 created for specific demo
+states — and ships 18 fixtures.
+
+It also seeds **work for a person to do**, which it previously did not. Every seeded
+document was `MATCHED`, so a fresh `db:reset` produced a product that looked finished and
+empty: the review queue — the screen the whole system exists to feed — had nothing in it,
+the audit trail had no events, and the charge register showed two of its four states.
+Everything unsettled was reachable only by starting a server and firing
+`npm run webhooks:demo`, which is a lot to ask of somebody who just wants to look at it.
+
+**Those documents are not hand-written rows.** Each is built with plausible extracted
+fields and then passed through `selectCandidateTransactions` → `matchDocument` →
+`persistMatchResult`, the same three calls the webhook pipeline makes. The confidences,
+the per-signal breakdowns and the reason codes on screen are whatever the engine actually
+computed — so if a threshold moves, these rows move with it. The decisions are made
+through the same primitives the server actions use, so the audit trail holds real events.
+
+After `npm run db:reset`, with no server and no webhooks:
+
+| Surface | What is there |
+|---|---|
+| Review queue | 9 documents across **all seven** work kinds |
+| Charge register | all four documentation states, including `REJECTED` |
+| Document register | `MATCHED`, `NEEDS_REVIEW` and `UNMATCHED` |
+| Audit trail | a maker's confirmation, a maker's rejection, a checker's sign-off |
+| Assurance queue | 91 attachments awaiting an independent check, one already signed off |
+
+They are built on the *background* cards deliberately. The scripted scenarios on cards
+4412/5520/6604 are left untouched, so `npm run webhooks:demo` still demonstrates the live
+pipeline end to end — see `SCENARIO_CRITICAL_CARDS`.
 
 The two groups exist for different reasons and it is worth being precise about which:
 

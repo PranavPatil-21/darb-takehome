@@ -1,5 +1,12 @@
 import { PrismaClient } from '@prisma/client';
 import { recomputeDocumentationStatuses } from '../lib/services/charge-status';
+import { recomputeDocumentStatus } from '../lib/services/document-status';
+import { selectCandidateTransactions } from '../lib/services/candidate-selection';
+import { matchDocument, type MatchableDocument } from '../lib/services/transaction-matcher';
+import { persistMatchResult } from '../lib/services/document-ingestion';
+import { claimConfirmedDocumentSlot } from '../lib/services/slot-claim';
+import { recordEvent } from '../lib/platform/audit';
+import { decideVerification } from '../lib/platform/verification';
 
 /**
  * Seed data.
@@ -320,6 +327,9 @@ async function main() {
   });
 
   await seedOperatingHistory(rawabi.id, nujood.id);
+  // Work for a person to do, scored by the real engine. Without it the product looks
+  // finished and empty — see `seedReviewWork`.
+  await seedReviewWork(rawabi.id, nujood.id);
   await reconcileStatuses(prisma);
 
   const [clients, identities, transactions] = await Promise.all([
@@ -559,6 +569,452 @@ async function seedOperatingHistory(rawabiId: number, nujoodId: number): Promise
  * the case `scripts/backfill-status.ts` exists for. Running the same reconciliation here
  * means a freshly seeded database is in the state the application would have produced.
  */
+/* -------------------------------------------------------------------------- */
+/* Work for a person to do                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Documents that are not settled, scored by the real engine.
+ *
+ * Without this the product looks finished and empty: `db:reset` produced 113 documents,
+ * every one of them `MATCHED`, so the review queue — the screen this whole system exists
+ * to feed — had nothing in it, the audit trail had no events, and the charge register
+ * showed two of its four states. Every unsettled state was reachable only by starting a
+ * server and firing `npm run webhooks:demo`, which is a lot to ask of someone who just
+ * wants to look at the thing.
+ *
+ * **These are not hand-written rows.** Each document is built with plausible extracted
+ * fields, then passed through `selectCandidateTransactions` → `matchDocument` →
+ * `persistMatchResult`: the same three calls the webhook pipeline makes. The confidences,
+ * the per-signal breakdowns and the reason codes on screen are whatever the engine
+ * actually computed, so what a reviewer sees is the product of the rules rather than a
+ * decoration of them. If a threshold changes, these rows change with it.
+ *
+ * They are deliberately built on the *background* cards. The scripted scenarios on cards
+ * 4412/5520/6604 stay untouched so `webhooks:demo` still demonstrates the live pipeline
+ * end to end — see `SCENARIO_CRITICAL_CARDS`.
+ */
+async function seedReviewWork(rawabiId: number, nujoodId: number): Promise<void> {
+  /** An undocumented background charge on a given card, oldest first. */
+  const openCharge = async (cardLast4: string, skip = 0) =>
+    prisma.transaction.findFirst({
+      where: { cardLast4, confirmedDocumentId: null },
+      orderBy: { transactionAt: 'desc' },
+      skip,
+    });
+
+  const senderFor = (clientId: number, driverPhone: string | null) =>
+    driverPhone ?? (clientId === rawabiId
+      ? 'fleetops@rawabi-logistics.example'
+      : 'accounts@nujood-catering.example');
+
+  let seq = 0;
+
+  /**
+   * Creates the document, runs the real matcher over the real candidate set, and persists
+   * whatever it decided. Returns the stored document id and the engine's outcome.
+   */
+  async function ingestScored(input: {
+    clientId: number;
+    driverPhone: string | null;
+    source: 'WHATSAPP' | 'EMAIL';
+    documentType: 'RECEIPT' | 'TAX_INVOICE' | 'UNKNOWN';
+    merchantName: string | null;
+    totalAmount: number | null;
+    documentDate: Date | null;
+    cardLast4: string | null;
+    extractionConfidence: number;
+    receivedAt: Date;
+    note: string;
+  }) {
+    seq += 1;
+    const document = await prisma.document.create({
+      data: {
+        source: input.source,
+        externalId: `seed.work.${seq}`,
+        contentHash: `seed-work-hash-${seq}`,
+        senderIdentifier: senderFor(input.clientId, input.driverPhone),
+        clientId: input.clientId,
+        driverPhone: input.driverPhone,
+        status: 'EXTRACTED',
+        documentType: input.documentType,
+        merchantName: input.merchantName,
+        vatNumber: input.documentType === 'UNKNOWN' ? null : `30000000000${String(seq).padStart(4, '0')}`,
+        totalAmount: input.totalAmount,
+        currency: input.totalAmount === null ? null : 'SAR',
+        documentDate: input.documentDate,
+        cardLast4: input.cardLast4,
+        rawText: input.note,
+        extractionConfidence: input.extractionConfidence,
+        receivedAt: input.receivedAt,
+      },
+    });
+
+    const matchable: MatchableDocument = {
+      source: input.source,
+      clientId: input.clientId,
+      driverPhone: input.driverPhone,
+      documentType: input.documentType,
+      merchantName: input.merchantName,
+      vatNumber: null,
+      totalAmount: input.totalAmount,
+      currency: input.totalAmount === null ? null : 'SAR',
+      documentDate: input.documentDate?.toISOString() ?? null,
+      cardLast4: input.cardLast4,
+      invoiceNumber: null,
+      extractionConfidence: input.extractionConfidence,
+    };
+
+    const candidates = await selectCandidateTransactions(prisma, matchable, input.receivedAt);
+    const result = matchDocument(matchable, candidates);
+    await persistMatchResult(prisma, document.id, result);
+
+    return { documentId: document.id, result };
+  }
+
+  const day = (iso: string) => new Date(iso);
+
+  /* -- One of each kind of work ------------------------------------------- */
+
+  // CHOOSE_CHARGE — two background charges on the same card, same day, same amount.
+  const ambiguousA = await openCharge('8899');
+  if (ambiguousA) {
+    const twin = await prisma.transaction.create({
+      data: {
+        clientId: ambiguousA.clientId,
+        cardLast4: ambiguousA.cardLast4,
+        driverPhone: ambiguousA.driverPhone,
+        merchantName: ambiguousA.merchantName,
+        amount: ambiguousA.amount,
+        currency: 'SAR',
+        transactionAt: new Date(ambiguousA.transactionAt.getTime() + 3 * 3600_000),
+      },
+    });
+    await ingestScored({
+      clientId: ambiguousA.clientId,
+      driverPhone: ambiguousA.driverPhone,
+      source: 'WHATSAPP',
+      documentType: 'RECEIPT',
+      merchantName: ambiguousA.merchantName.replace(/ (ST|BR|RUH|DMM)\b.*$/, ''),
+      totalAmount: ambiguousA.amount,
+      documentDate: ambiguousA.transactionAt,
+      cardLast4: ambiguousA.cardLast4,
+      extractionConfidence: 0.93,
+      receivedAt: new Date(twin.transactionAt.getTime() + 86_400_000),
+      note: 'Two charges at the same branch, three hours apart, for the same amount.',
+    });
+  }
+
+  // CHECK_FIGURES — a tip. The receipt total is below the charge by more than rounding.
+  const tipped = await openCharge('1155');
+  if (tipped) {
+    await ingestScored({
+      clientId: tipped.clientId,
+      driverPhone: tipped.driverPhone,
+      source: 'WHATSAPP',
+      documentType: 'RECEIPT',
+      merchantName: tipped.merchantName.replace(/ (ST|BR|RUH|DMM)\b.*$/, ''),
+      totalAmount: Math.round(tipped.amount * 0.88),
+      documentDate: tipped.transactionAt,
+      cardLast4: tipped.cardLast4,
+      extractionConfidence: 0.91,
+      receivedAt: new Date(tipped.transactionAt.getTime() + 2 * 86_400_000),
+      note: 'Printed total 12% below the charge — a service charge added at the terminal.',
+    });
+  }
+
+  // CHECK_FIGURES via a scan the OCR itself distrusts.
+  const blurry = await openCharge('7731');
+  if (blurry) {
+    await ingestScored({
+      clientId: blurry.clientId,
+      driverPhone: blurry.driverPhone,
+      source: 'EMAIL',
+      documentType: 'TAX_INVOICE',
+      merchantName: blurry.merchantName.replace(/ (ST|BR|RUH|DMM)\b.*$/, ''),
+      totalAmount: blurry.amount,
+      documentDate: blurry.transactionAt,
+      cardLast4: blurry.cardLast4,
+      extractionConfidence: 0.41,
+      receivedAt: new Date(blurry.transactionAt.getTime() + 86_400_000),
+      note: 'Faxed invoice. Every field agrees, but the OCR distrusted its own read.',
+    });
+  }
+
+  // WEAK_EVIDENCE — merchant and date survived; the total and the card did not.
+  //
+  // Given its own charge on its own card, so exactly one candidate is in the window.
+  // With several, a document carrying only a merchant and a date ties them and the
+  // engine reports ambiguity instead — correctly, but that is a different queue.
+  const faint = await prisma.transaction.create({
+    data: {
+      clientId: rawabiId,
+      cardLast4: '3370',
+      driverPhone: '966553330000',
+      merchantName: 'MADA CAFE BR 12 RUH',
+      amount: 8_450,
+      currency: 'SAR',
+      transactionAt: day('2025-06-24T10:15:00Z'),
+    },
+  });
+  await prisma.senderIdentity.create({
+    data: {
+      identifier: '966553330000',
+      channel: 'WHATSAPP',
+      clientId: rawabiId,
+      driverPhone: '966553330000',
+      label: 'Nawaf Al-Dossari (driver, card 3370)',
+    },
+  });
+  await ingestScored({
+    clientId: rawabiId,
+    driverPhone: '966553330000',
+    source: 'WHATSAPP',
+    documentType: 'RECEIPT',
+    merchantName: 'Mada Cafe',
+    totalAmount: null,
+    documentDate: faint.transactionAt,
+    cardLast4: null,
+    extractionConfidence: 0.74,
+    receivedAt: new Date(faint.transactionAt.getTime() + 86_400_000),
+    note: 'Thermal paper left on a dashboard. The merchant and the date are all that is left.',
+  });
+
+  // POSSIBLE_DUPLICATE — a second receipt for a charge that already holds one. The
+  // cardholder slip arrives after the till receipt was already attached.
+  const alreadyDocumented = await prisma.transaction.findFirst({
+    where: { confirmedDocumentId: { not: null }, cardLast4: '8899' },
+    orderBy: { transactionAt: 'desc' },
+  });
+  if (alreadyDocumented) {
+    await ingestScored({
+      clientId: alreadyDocumented.clientId,
+      driverPhone: alreadyDocumented.driverPhone,
+      source: 'WHATSAPP',
+      documentType: 'RECEIPT',
+      merchantName: alreadyDocumented.merchantName.replace(/ (ST|BR|RUH|DMM)\b.*$/, ''),
+      totalAmount: alreadyDocumented.amount,
+      documentDate: alreadyDocumented.transactionAt,
+      cardLast4: alreadyDocumented.cardLast4,
+      extractionConfidence: 0.96,
+      receivedAt: new Date(alreadyDocumented.transactionAt.getTime() + 3 * 86_400_000),
+      note: 'Cardholder slip for a charge that already has a till receipt attached.',
+    });
+  }
+
+  // NO_CHARGE_FOUND — a real receipt whose charge has not posted yet.
+  await ingestScored({
+    clientId: rawabiId,
+    driverPhone: '966557778888',
+    source: 'WHATSAPP',
+    documentType: 'RECEIPT',
+    merchantName: 'Qasr Al Mandi Restaurant',
+    totalAmount: 73_317,
+    documentDate: day('2025-07-04T19:40:00Z'),
+    cardLast4: '8899',
+    extractionConfidence: 0.95,
+    receivedAt: day('2025-07-04T19:55:00Z'),
+    note: 'Receipt photographed at the till. The settlement has not posted yet.',
+  });
+
+  // UNREADABLE — OCR returned nothing usable.
+  await ingestScored({
+    clientId: nujoodId,
+    driverPhone: '966561112233',
+    source: 'WHATSAPP',
+    documentType: 'UNKNOWN',
+    merchantName: null,
+    totalAmount: null,
+    documentDate: null,
+    cardLast4: null,
+    extractionConfidence: 0.12,
+    receivedAt: day('2025-06-26T08:10:00Z'),
+    note: 'Photograph of a dashboard, taken by accident.',
+  });
+
+  // SENDER_UNKNOWN — a readable receipt from a number nobody has registered.
+  seq += 1;
+  await prisma.document.create({
+    data: {
+      source: 'WHATSAPP',
+      externalId: `seed.work.${seq}`,
+      contentHash: `seed-work-hash-${seq}`,
+      senderIdentifier: '966509998877',
+      clientId: null,
+      driverPhone: null,
+      status: 'UNMATCHED',
+      failureReason: 'NO_CANDIDATE_TRANSACTIONS',
+      documentType: 'RECEIPT',
+      merchantName: 'Sasco Fuel Station',
+      vatNumber: '300000000099001',
+      totalAmount: 18_900,
+      currency: 'SAR',
+      documentDate: day('2025-06-25T07:30:00Z'),
+      cardLast4: '2244',
+      rawText: 'Perfectly readable. We do not know whose driver this is.',
+      extractionConfidence: 0.94,
+      receivedAt: day('2025-06-25T07:45:00Z'),
+    },
+  });
+
+  /* -- Decisions, so the trail and the settled states are not empty -------- */
+
+  // Made on documents created for the purpose, not on the queue above.
+  //
+  // Acting on the demo work items would consume them — the first attempt confirmed a
+  // candidate belonging to the ambiguity example, which emptied the `CHOOSE_CHARGE` queue
+  // that example exists to fill. The trail needs decisions; the queue needs work; they
+  // must not be the same rows.
+  //
+  // Each decision goes through the same primitives the server actions use —
+  // `claimConfirmedDocumentSlot`, `recordEvent`, `recomputeDocumentStatus` — so the audit
+  // trail contains real events and the charge register shows its REJECTED and IN_REVIEW
+  // states rather than only DOCUMENTED and MISSING.
+
+  /** A fresh document that matches one open charge, left in review for a person to decide. */
+  async function decidableDocument(cardLast4: string) {
+    const charge = await openCharge(cardLast4);
+    if (!charge) return null;
+    const { documentId } = await ingestScored({
+      clientId: charge.clientId,
+      driverPhone: charge.driverPhone,
+      source: 'WHATSAPP',
+      documentType: 'RECEIPT',
+      merchantName: charge.merchantName.replace(/ (ST|BR|RUH|DMM)\b.*$/, ''),
+      totalAmount: charge.amount,
+      documentDate: charge.transactionAt,
+      cardLast4: charge.cardLast4,
+      // Under the OCR gate, so it lands in review rather than settling itself — which is
+      // what makes the human decision worth recording.
+      extractionConfidence: 0.52,
+      receivedAt: new Date(charge.transactionAt.getTime() + 86_400_000),
+      note: 'Legible, but the OCR was unsure enough that a person had to sign it off.',
+    });
+    return prisma.documentMatch.findFirst({
+      where: { documentId, status: 'CANDIDATE' },
+      orderBy: { confidence: 'desc' },
+      include: { transaction: { select: { amount: true } } },
+    });
+  }
+
+  const confirmed = await decidableDocument('1155');
+  if (confirmed) {
+    const claimed = await claimConfirmedDocumentSlot(
+      prisma.transaction,
+      confirmed.transactionId,
+      confirmed.documentId,
+      prisma,
+    );
+    if (claimed) {
+      const verification = decideVerification({
+        amount: confirmed.transaction.amount,
+        automatic: false,
+        draw: 0.04,
+      });
+      await prisma.documentMatch.update({
+        where: { id: confirmed.id },
+        data: {
+          status: 'CONFIRMED',
+          decidedBy: 'reviewer',
+          decidedAt: day('2025-06-28T09:15:00Z'),
+          verificationRequired: verification.required,
+          verificationTrigger: verification.required ? verification.trigger : null,
+          verificationReason: verification.required ? verification.reason : null,
+        },
+      });
+      await recordEvent(prisma.reviewEvent, {
+        documentId: confirmed.documentId,
+        transactionId: confirmed.transactionId,
+        matchId: confirmed.id,
+        action: 'CONFIRMED',
+        actorId: 'reviewer',
+        actorRole: 'MAKER',
+        confidence: confirmed.confidence,
+        note: 'Branch and time checked against the paper receipt.',
+      });
+      await recomputeDocumentStatus(prisma, confirmed.documentId);
+    }
+  }
+
+  // On a charge of its own, so rejecting the only proposal leaves the charge in the
+  // REJECTED state — "somebody looked and said no", which is a different queue from
+  // "nobody has proposed anything". Reusing a shared card left another document's
+  // candidate alive on the same charge, so it stayed IN_REVIEW and the state never showed.
+  const lonelyCharge = await prisma.transaction.create({
+    data: {
+      clientId: nujoodId,
+      cardLast4: '7731',
+      driverPhone: '966561112233',
+      merchantName: 'HERFY FOOD SERVICES BR 8',
+      amount: 15_600,
+      currency: 'SAR',
+      transactionAt: day('2025-06-23T12:30:00Z'),
+    },
+  });
+  const { documentId: rejectedDocumentId } = await ingestScored({
+    clientId: nujoodId,
+    driverPhone: '966561112233',
+    source: 'WHATSAPP',
+    documentType: 'RECEIPT',
+    merchantName: 'Herfy Food Services',
+    totalAmount: lonelyCharge.amount,
+    documentDate: lonelyCharge.transactionAt,
+    cardLast4: lonelyCharge.cardLast4,
+    extractionConfidence: 0.54,
+    receivedAt: new Date(lonelyCharge.transactionAt.getTime() + 86_400_000),
+    note: 'Right chain, wrong branch — the driver was at the airport road store.',
+  });
+  const rejected = await prisma.documentMatch.findFirst({
+    where: { documentId: rejectedDocumentId, status: 'CANDIDATE' },
+    orderBy: { confidence: 'desc' },
+    include: { transaction: { select: { amount: true } } },
+  });
+  if (rejected) {
+    await prisma.documentMatch.update({
+      where: { id: rejected.id },
+      data: { status: 'REJECTED', decidedBy: 'reviewer', decidedAt: day('2025-06-28T09:22:00Z') },
+    });
+    await recordEvent(prisma.reviewEvent, {
+      documentId: rejected.documentId,
+      transactionId: rejected.transactionId,
+      matchId: rejected.id,
+      action: 'REJECTED',
+      actorId: 'reviewer',
+      actorRole: 'MAKER',
+      confidence: rejected.confidence,
+      note: 'Different branch — the driver confirmed it was the airport road station.',
+    });
+    await recomputeDocumentStatus(prisma, rejected.documentId);
+  }
+
+  // One checker sign-off, so the assurance queue shows a completed verification beside the
+  // outstanding ones and the trail carries a CHECKER row.
+  const toVerify = await prisma.documentMatch.findFirst({
+    where: { verificationRequired: true, verifiedAt: null, decidedBy: 'reviewer' },
+    orderBy: { id: 'asc' },
+  });
+  if (toVerify) {
+    await prisma.documentMatch.update({
+      where: { id: toVerify.id },
+      data: {
+        verifiedBy: 'controller',
+        verifiedAt: day('2025-06-28T16:40:00Z'),
+        verificationOutcome: 'UPHELD',
+      },
+    });
+    await recordEvent(prisma.reviewEvent, {
+      documentId: toVerify.documentId,
+      transactionId: toVerify.transactionId,
+      matchId: toVerify.id,
+      action: 'VERIFIED',
+      actorId: 'controller',
+      actorRole: 'CHECKER',
+      confidence: toVerify.confidence,
+      note: 'Independent check: amount, card and merchant all agree.',
+    });
+  }
+}
+
 async function reconcileStatuses(prisma: PrismaClient) {
   const charges = await prisma.transaction.findMany({ select: { id: true } });
   await recomputeDocumentationStatuses(

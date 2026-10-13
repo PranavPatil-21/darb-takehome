@@ -49,11 +49,33 @@ export function documentStatusOf({ currentStatus, matches }: DocumentStatusInput
   return 'UNMATCHED';
 }
 
-/** Why a document is unmatched, for the register. Null unless it is unmatched. */
+/**
+ * The document's `failureReason` after a status recompute.
+ *
+ * The column carries two different meanings, which is why this is not a one-liner:
+ *
+ *  - on an `UNMATCHED` row it says *why nothing matched* — and if candidates existed and
+ *    were all ruled out, that fact is the reason;
+ *  - on a `NEEDS_REVIEW` row it says *why a person is looking* — the matcher's reason
+ *    code, which the work queue groups by and the reviewer reads as the headline.
+ *
+ * Treating it as the first meaning only — nulling it for every other status — stripped
+ * the matcher's reason off a document the moment anyone rejected one of its candidates.
+ * The document stayed in review with no explanation, and the queue silently moved it to
+ * the fallback kind, so a `CHOOSE_CHARGE` item became a `CHECK_FIGURES` one because
+ * somebody acted on it.
+ */
 export function documentFailureReasonOf(
   status: DocumentStatus,
   matches: readonly { status: MatchStatus }[],
+  currentReason: string | null = null,
 ): string | null {
-  if (status !== 'UNMATCHED') return null;
-  return matches.length > 0 ? 'ALL_CANDIDATES_REJECTED' : null;
+  if (status === 'UNMATCHED') {
+    return matches.length > 0 ? 'ALL_CANDIDATES_REJECTED' : currentReason;
+  }
+  // Settled. Nothing is outstanding, so there is nothing to explain.
+  if (status === 'MATCHED') return null;
+
+  // Still in review, or terminal: whatever the matcher or the extractor said stands.
+  return currentReason;
 }
